@@ -103,7 +103,8 @@ class RandomJitter(object):
 
     def __call__(self, data):
         if random.random() < self.prob:
-            (n, dim), t = data.pos.size(), self.translate
+            non_fixed_elements = ~data.fixed.bool()
+            (n, dim), t = data.pos[non_fixed_elements].size(), self.translate
             if isinstance(t, numbers.Number):
                 t = list(repeat(t, times=dim))
             assert len(t) == dim
@@ -111,10 +112,14 @@ class RandomJitter(object):
             ts = []
             for d in range(dim):
                 ts.append(
-                    data.pos.new_empty(n).uniform_(-abs(t[d]), abs(t[d]))
+                    data.pos[non_fixed_elements]
+                    .new_empty(n)
+                    .uniform_(-abs(t[d]), abs(t[d]))
                 )
 
-            data.pos = data.pos + torch.stack(ts, dim=-1)
+            data.pos[non_fixed_elements] = data.pos[
+                non_fixed_elements
+            ] + torch.stack(ts, dim=-1)
             data.jitter = torch.tensor([1.0], dtype=torch.float32)
         else:
             data.jitter = torch.tensor([0.0], dtype=torch.float32)
