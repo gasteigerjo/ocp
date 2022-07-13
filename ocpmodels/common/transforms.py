@@ -11,6 +11,7 @@ LICENSE file in the root directory of this source tree.
 import math
 import numbers
 import random
+from itertools import repeat
 
 import torch
 import torch_geometric
@@ -76,3 +77,48 @@ class RandomRotate(object):
         return "{}({}, axis={})".format(
             self.__class__.__name__, self.degrees, self.axis
         )
+
+
+class RandomJitter(object):
+    r"""With a certain probability translates node positions by randomly sampled translation values
+    within a given interval (functional name: :obj:`random_jitter`).
+    In contrast to other random transformations,
+    translation is applied separately at each position
+
+    Args:
+        translate (sequence or float or int): Maximum translation in each
+            dimension, defining the range
+            :math:`(-\mathrm{translate}, +\mathrm{translate})` to sample from.
+            If :obj:`translate` is a number instead of a sequence, the same
+            range is used for each dimension.
+        prob (float): Probability (0 to 1) of translating positions
+    """
+
+    def __init__(self, config):
+        self.translate = config.get("max_translation", 0.1)
+        self.prob = config.get("translation_probability", 1.0)
+        assert (
+            self.prob <= 1.0
+        ), "Probabiltiy of RandomJitter needs to be maximum 1.0"
+
+    def __call__(self, data):
+        if random.random() < self.prob:
+            (n, dim), t = data.pos.size(), self.translate
+            if isinstance(t, numbers.Number):
+                t = list(repeat(t, times=dim))
+            assert len(t) == dim
+
+            ts = []
+            for d in range(dim):
+                ts.append(
+                    data.pos.new_empty(n).uniform_(-abs(t[d]), abs(t[d]))
+                )
+
+            data.pos = data.pos + torch.stack(ts, dim=-1)
+            data.jitter = torch.tensor([1.0], dtype=torch.float32)
+        else:
+            data.jitter = torch.tensor([0.0], dtype=torch.float32)
+        return data
+
+    def __repr__(self) -> str:
+        return f'{self.__class__.__name__}({{"max_translation": {self.translate}, "translation_probability": {self.prob}}})'
