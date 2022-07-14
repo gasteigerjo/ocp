@@ -38,6 +38,7 @@ optim:
 
 
 # TODO: a very dirty way to do. the best way is to load from a config path to the teacher model.
+teacher_path: pretrained/gemnet_dT.pth
 teacher_model:
   name: gemnet_t
   num_spherical: 7

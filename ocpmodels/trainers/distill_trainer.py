@@ -116,7 +116,8 @@ class DistillForcesTrainer(BaseTrainer):
             self.num_targets,
             **self.config["teacher_model_attributes"],
         ).to(self.device)
-                
+        self.load_teacher(self.config['teacher_path'])
+         
     def load_task(self):
         logging.info(f"Loading dataset: {self.config['task']['dataset']}")
 
@@ -156,6 +157,30 @@ class DistillForcesTrainer(BaseTrainer):
                         device=self.device,
                     )
                     self.normalizers["grad_target"].mean.fill_(0)
+
+
+    def load_teacher(self, checkpoint_path):
+        logging.info(f"Loading checkpoint from: {checkpoint_path}")
+        map_location = torch.device("cpu") if self.cpu else self.device
+        checkpoint = torch.load(checkpoint_path, map_location=map_location)
+        # Load model, optimizer, normalizer state dict.
+        # if trained with ddp and want to load in non-ddp, modify keys from
+        # module.module.. -> module..
+        first_key = next(iter(checkpoint["state_dict"]))
+        if (
+            not distutils.initialized() or self.config["noddp"]
+        ) and first_key.split(".")[1] == "module":
+            # No need for OrderedDict since dictionaries are technically ordered
+            # since Python 3.6 and officially ordered since Python 3.7
+            new_dict = {k[7:]: v for k, v in checkpoint["state_dict"].items()}
+            self.teacher.load_state_dict(new_dict)
+        elif distutils.initialized() and first_key.split(".")[1] != "module":
+            new_dict = {
+                f"module.{k}": v for k, v in checkpoint["state_dict"].items()
+            }
+            self.teacher.load_state_dict(new_dict)
+        else:
+            self.teacher.load_state_dict(checkpoint["state_dict"])
 
     # Takes in a new data source and generates predictions on it.
     @torch.no_grad()
