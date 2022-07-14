@@ -75,6 +75,30 @@ class OCPDataParallel(torch.nn.DataParallel):
         outputs = self.parallel_apply(replicas, inputs, None)
         return self.gather(outputs, self.output_device)
 
+    def extract_features(self, batch_list):
+        if self.cpu:
+            return self.module.extract_features(batch_list[0])
+
+        if len(self.device_ids) == 1:
+            return self.module.extract_features(batch_list[0].to(f"cuda:{self.device_ids[0]}"))
+
+        for t in chain(self.module.parameters(), self.module.buffers()):
+            if t.device != self.src_device:
+                raise RuntimeError(
+                    (
+                        "Module must have its parameters and buffers on device "
+                        "{} but found one of them on device {}."
+                    ).format(self.src_device, t.device)
+                )
+
+        inputs = [
+            batch.to(f"cuda:{self.device_ids[i]}")
+            for i, batch in enumerate(batch_list)
+        ]
+        replicas = self.replicate(self.module.extract_features, self.device_ids[: len(inputs)])
+        outputs = self.parallel_apply(replicas, inputs, None)
+        return self.gather(outputs, self.output_device)
+    
 
 class ParallelCollater:
     def __init__(self, num_gpus, otf_graph=False):
