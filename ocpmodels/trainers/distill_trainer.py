@@ -83,6 +83,7 @@ class DistillForcesTrainer(BaseTrainer):
         cpu=False,
         slurm={},
         noddp=False,
+        config=None, 
         **kwargs,  
     ):
         super().__init__(
@@ -119,7 +120,8 @@ class DistillForcesTrainer(BaseTrainer):
             self.num_targets,
             **teacher_model_attributes,
         ).to(self.device)
-        self.load_teacher(self.config['teacher_path'])
+        self.teacher.eval()
+        self.load_teacher(config['teacher_path'])
          
     def load_task(self):
         logging.info(f"Loading dataset: {self.config['task']['dataset']}")
@@ -489,11 +491,11 @@ class DistillForcesTrainer(BaseTrainer):
     def _distill_forward(self, batch_list):
         # forward pass.
         if self.config["model_attributes"].get("regress_forces", True):
-            [sfnode, sfedge], [out_energy, out_forces] = self.model.extract_features(batch_list)
+            [sfnode, sfedge], [out_energy, out_forces] = self.model.module.extract_features(batch_list)
             with torch.no_grad():
-                [tfnode, tfedge], [t_out_energy, t_out_forces] = self.teacher.extract_features(batch_list)
+                [tfnode, tfedge], [t_out_energy, t_out_forces] = self.teacher.module.extract_features(batch_list)
         else:
-            [sfnode, sfedge], out_energy = self.model(batch_list)
+            [sfnode, sfedge], out_energy = self.model.module.extract_features(batch_list)
             with torch.no_grad():
                 [tfnode, tfedge], t_out_energy = self.teacher.extract_features(batch_list)
 
