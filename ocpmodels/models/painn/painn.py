@@ -476,6 +476,7 @@ class PaiNN(ScaledModule):
         x = self.atom_emb(z)
         vec = torch.zeros(x.size(0), 3, x.size(1), device=x.device)
 
+        # TODO: output student vector feature for distill. vec 
         #### Interaction blocks ###############################################
         # x_list, vec_list = [], []
         for i in range(self.num_layers):

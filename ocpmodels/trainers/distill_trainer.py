@@ -501,7 +501,7 @@ class DistillForcesTrainer(BaseTrainer):
             
         out = {
             "node_feature": sfnode,
-            "edge_feature": sfnode,
+            "edge_feature": sfedge,
             "energy": out_energy,
         }
 
@@ -510,7 +510,7 @@ class DistillForcesTrainer(BaseTrainer):
 
         t_out = {
             "node_feature": tfnode,
-            "edge_feature": tfnode,
+            "edge_feature": tfedge,
             "energy": t_out_energy,
         }
 
