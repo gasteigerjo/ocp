@@ -1,5 +1,6 @@
 includes:
   - configs/s2ef/200k/base.yml
+trainer: distill
 
 model:
   name: painn
