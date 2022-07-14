@@ -92,11 +92,14 @@ class LmdbDataset(Dataset):
                 .begin()
                 .get(f"{self._keys[db_idx][el_idx]}".encode("ascii"))
             )
-            data_object = pyg2_data_transform(pickle.loads(datapoint_pickled))
+            # TODO: lined removed @Gordon. 
+            # data_object = pyg2_data_transform(pickle.loads(datapoint_pickled))
+            data_object = pickle.loads(datapoint_pickled)
             data_object.id = f"{db_idx}_{el_idx}"
         else:
             datapoint_pickled = self.env.begin().get(self._keys[idx])
-            data_object = pyg2_data_transform(pickle.loads(datapoint_pickled))
+            # data_object = pyg2_data_transform(pickle.loads(datapoint_pickled))
+            data_object = pickle.loads(datapoint_pickled)
 
         if self.transform is not None:
             data_object = self.transform(data_object)

@@ -1,0 +1,13 @@
+submitit
+lmdb==1.1.1
+ase==3.21
+pymatgen==2020.12.31 
+gdown
+easydict==1.9
+PyYAML==6.0
+protobuf==3.19.4
+tensorboard==2.8.0
+termcolor==1.1.0
+tqdm==4.62.3
+wandb==0.12.10
+setuptools==59.5.0
