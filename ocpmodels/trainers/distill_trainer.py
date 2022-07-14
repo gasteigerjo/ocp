@@ -83,7 +83,7 @@ class DistillForcesTrainer(BaseTrainer):
         cpu=False,
         slurm={},
         noddp=False,
-        teacher_model=None,
+        config=None, 
     ):
         super().__init__(
             task=task,
@@ -106,7 +106,10 @@ class DistillForcesTrainer(BaseTrainer):
             slurm=slurm,
             noddp=noddp,
         )
-        self.teacher = registry.get_model_class(self.config["teacher_model"])(
+        teacher_config = self.config['teacher_model']
+        teacher_model = teacher_config.pop('name')
+        teacher_model_attributes = teacher_config
+        self.teacher = registry.get_model_class(teacher_model)(
             self.loader.dataset[0].x.shape[-1]
             if self.loader
             and hasattr(self.loader.dataset[0], "x")
@@ -114,7 +117,7 @@ class DistillForcesTrainer(BaseTrainer):
             else None,
             self.bond_feat_dim,
             self.num_targets,
-            **self.config["teacher_model_attributes"],
+            **teacher_model_attributes,
         ).to(self.device)
         self.load_teacher(self.config['teacher_path'])
          
