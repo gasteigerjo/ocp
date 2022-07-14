@@ -122,6 +122,7 @@ class OCPCalculator(Calculator):
                 config["trainer"] = "energy"
 
             config["model_attributes"]["name"] = config.pop("model")
+            config["teacher_attributes"]["name"] = config.pop("teacher_model")
             config["model"] = config["model_attributes"]
 
         # Calculate the edge indices on the fly

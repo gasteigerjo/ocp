@@ -477,7 +477,7 @@ class PaiNN(ScaledModule):
         vec = torch.zeros(x.size(0), 3, x.size(1), device=x.device)
 
         #### Interaction blocks ###############################################
-        x_list, vec_list = [], []
+        # x_list, vec_list = [], []
         for i in range(self.num_layers):
             dx, dvec = self.message_layers[i](
                 x, vec, edge_index, edge_rbf, edge_vector
@@ -492,8 +492,8 @@ class PaiNN(ScaledModule):
             x = x + dx
             vec = vec + dvec
             x = getattr(self, "upd_out_scalar_scale_%d" % i)(x)
-            x_list.append(x)
-            vec_list.append(x)
+            # x_list.append(x)
+            # vec_list.append(x)
         #### Output block #####################################################
 
         per_atom_energy = self.out_energy(x).squeeze(1)
@@ -513,9 +513,11 @@ class PaiNN(ScaledModule):
                         create_graph=True,
                     )[0]
                 )
-                return [x_list, vec_list], [energy, forces]
+                # return [x_list, vec_list], [energy, forces]
+                return [x, None], [energy, forces]
         else:
-            return [x_list, vec_list], energy
+            # return [x_list, vec_list], energy
+            return [x, None], energy
         
     @property
     def num_params(self):

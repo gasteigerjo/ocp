@@ -353,6 +353,8 @@ class BaseTrainer(ABC):
         )
 
         loader = self.train_loader or self.val_loader or self.test_loader
+        self.loader = loader
+        self.bond_feat_dim = bond_feat_dim 
         self.model = registry.get_model_class(self.config["model"])(
             loader.dataset[0].x.shape[-1]
             if loader
