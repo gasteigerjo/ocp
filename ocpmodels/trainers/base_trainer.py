@@ -69,7 +69,7 @@ class BaseTrainer(ABC):
         name="base_trainer",
         slurm={},
         noddp=False,
-        config=None, 
+        **kwargs 
     ):
         self.name = name
         self.cpu = cpu
@@ -146,11 +146,6 @@ class BaseTrainer(ABC):
             },
             "slurm": slurm,
             "noddp": noddp,
-            # todo: dirty code. why not just merge from config.
-            "teacher_model": config.get('teacher_model', None), 
-            "teacher_path": config.get('teacher_path', None), 
-            "distill_loss": config.get('distill_loss', 'node2node'), 
-            "distill_lambda": config.get('distill_lambda', 1.0)
         }
         # AMP Scaler
         self.scaler = torch.cuda.amp.GradScaler() if amp else None

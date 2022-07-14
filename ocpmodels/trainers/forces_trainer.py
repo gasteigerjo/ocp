@@ -83,6 +83,7 @@ class ForcesTrainer(BaseTrainer):
         cpu=False,
         slurm={},
         noddp=False,
+        **kwargs
     ):
         super().__init__(
             task=task,

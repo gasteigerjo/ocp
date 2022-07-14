@@ -83,7 +83,7 @@ class DistillForcesTrainer(BaseTrainer):
         cpu=False,
         slurm={},
         noddp=False,
-        config=None, 
+        **kwargs,  
     ):
         super().__init__(
             task=task,
@@ -106,7 +106,7 @@ class DistillForcesTrainer(BaseTrainer):
             slurm=slurm,
             noddp=noddp,
         )
-        teacher_config = self.config['teacher_model']
+        teacher_config = config['teacher_model']
         teacher_model = teacher_config.pop('name')
         teacher_model_attributes = teacher_config
         self.teacher = registry.get_model_class(teacher_model)(
