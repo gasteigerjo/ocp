@@ -120,9 +120,6 @@ class RandomJitter(object):
             data.pos[non_fixed_elements] = data.pos[
                 non_fixed_elements
             ] + torch.stack(ts, dim=-1)
-            data.jitter = torch.tensor([1.0], dtype=torch.float32)
-        else:
-            data.jitter = torch.tensor([0.0], dtype=torch.float32)
         return data
 
     def __repr__(self) -> str:
