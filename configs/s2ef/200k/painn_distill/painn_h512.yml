@@ -40,7 +40,7 @@ optim:
 
 # TODO: we should use gemnet_oc as teacher not gemnet_t
 # TODO: a very dirty way to do. the best way is to load from a config path to the teacher model.
-teacher_path: pretrained/gemnet_dT.pth
+teacher_path: pretrained/gemnet_t_direct_h512_2M.pt
 teacher_model:
   name: gemnet_t
   num_spherical: 7

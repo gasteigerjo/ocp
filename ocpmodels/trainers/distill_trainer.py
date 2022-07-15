@@ -107,9 +107,13 @@ class DistillForcesTrainer(BaseTrainer):
             slurm=slurm,
             noddp=noddp,
         )
+        # TODO: the way using config is quite strange. Clean the code. 
         teacher_config = config['teacher_model']
         teacher_model = teacher_config.pop('name')
         teacher_model_attributes = teacher_config
+        self.config['teacher_model_attributes'] = teacher_model_attributes
+        self.config['distill_loss'] = config['distill_loss']
+        self.config['distill_lambda'] = config['distill_lambda']
         self.teacher = registry.get_model_class(teacher_model)(
             self.loader.dataset[0].x.shape[-1]
             if self.loader
@@ -120,9 +124,9 @@ class DistillForcesTrainer(BaseTrainer):
             self.num_targets,
             **teacher_model_attributes,
         ).to(self.device)
-        self.teacher.eval()
         self.load_teacher(config['teacher_path'])
-         
+        self.teacher.eval()
+
     def load_task(self):
         logging.info(f"Loading dataset: {self.config['task']['dataset']}")
 
@@ -177,7 +181,9 @@ class DistillForcesTrainer(BaseTrainer):
         ) and first_key.split(".")[1] == "module":
             # No need for OrderedDict since dictionaries are technically ordered
             # since Python 3.6 and officially ordered since Python 3.7
-            new_dict = {k[7:]: v for k, v in checkpoint["state_dict"].items()}
+            
+            # strange. why module.module?? TODO
+            new_dict = {k[14:]: v for k, v in checkpoint["state_dict"].items()}
             self.teacher.load_state_dict(new_dict)
         elif distutils.initialized() and first_key.split(".")[1] != "module":
             new_dict = {
@@ -491,13 +497,13 @@ class DistillForcesTrainer(BaseTrainer):
     def _distill_forward(self, batch_list):
         # forward pass.
         if self.config["model_attributes"].get("regress_forces", True):
-            [sfnode, sfedge], [out_energy, out_forces] = self.model.module.extract_features(batch_list)
-            with torch.no_grad():
-                [tfnode, tfedge], [t_out_energy, t_out_forces] = self.teacher.module.extract_features(batch_list)
+            [sfnode, sfedge], [out_energy, out_forces] = self.model.extract_features(batch_list)
+            with torch.no_grad():# TODO: this only suppot using 1 GPU for now. 
+                [tfnode, tfedge], [t_out_energy, t_out_forces] = self.teacher.extract_features(batch_list[0].cuda())
         else:
-            [sfnode, sfedge], out_energy = self.model.module.extract_features(batch_list)
+            
             with torch.no_grad():
-                [tfnode, tfedge], t_out_energy = self.teacher.extract_features(batch_list)
+                [tfnode, tfedge], t_out_energy = self.teacher.extract_features(batch_list[0].cuda()) 
 
         if out_energy.shape[-1] == 1:
             out_energy = out_energy.view(-1)

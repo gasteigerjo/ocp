@@ -503,7 +503,6 @@ class PaiNN(ScaledModule):
         if self.regress_forces:
             if self.direct_forces:
                 forces = self.out_forces(x, vec)
-                return energy, forces
             else:
                 forces = (
                     -1
@@ -514,8 +513,8 @@ class PaiNN(ScaledModule):
                         create_graph=True,
                     )[0]
                 )
-                # return [x_list, vec_list], [energy, forces]
-                return [x, None], [energy, forces]
+            # return [x_list, vec_list], [energy, forces]
+            return [x, None], [energy, forces]
         else:
             # return [x_list, vec_list], energy
             return [x, None], energy
