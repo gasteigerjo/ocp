@@ -38,6 +38,7 @@ optim:
   weight_decay: 0  # 2e-6 (TF weight decay) / 1e-4 (lr) = 2e-2
 
 
+# TODO: we should use gemnet_oc as teacher not gemnet_t
 # TODO: a very dirty way to do. the best way is to load from a config path to the teacher model.
 teacher_path: pretrained/gemnet_dT.pth
 teacher_model:
