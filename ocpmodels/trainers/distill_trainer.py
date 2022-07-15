@@ -25,8 +25,8 @@ from ocpmodels.modules.normalizer import Normalizer
 from ocpmodels.trainers.base_trainer import BaseTrainer
 
 
-@registry.register_trainer("forces")
-class ForcesTrainer(BaseTrainer):
+@registry.register_trainer("distill")
+class DistillForcesTrainer(BaseTrainer):
     """
     Trainer class for the Structure to Energy & Force (S2EF) and Initial State to
     Relaxed State (IS2RS) tasks.
@@ -83,7 +83,8 @@ class ForcesTrainer(BaseTrainer):
         cpu=False,
         slurm={},
         noddp=False,
-        **kwargs
+        config=None, 
+        **kwargs,  
     ):
         super().__init__(
             task=task,
@@ -106,6 +107,25 @@ class ForcesTrainer(BaseTrainer):
             slurm=slurm,
             noddp=noddp,
         )
+        # TODO: the way using config is quite strange. Clean the code. 
+        teacher_config = config['teacher_model']
+        teacher_model = teacher_config.pop('name')
+        teacher_model_attributes = teacher_config
+        self.config['teacher_model_attributes'] = teacher_model_attributes
+        self.config['distill_loss'] = config['distill_loss']
+        self.config['distill_lambda'] = config['distill_lambda']
+        self.teacher = registry.get_model_class(teacher_model)(
+            self.loader.dataset[0].x.shape[-1]
+            if self.loader
+            and hasattr(self.loader.dataset[0], "x")
+            and self.loader.dataset[0].x is not None
+            else None,
+            self.bond_feat_dim,
+            self.num_targets,
+            **teacher_model_attributes,
+        ).to(self.device)
+        self.load_teacher(config['teacher_path'])
+        self.teacher.eval()
 
     def load_task(self):
         logging.info(f"Loading dataset: {self.config['task']['dataset']}")
@@ -146,6 +166,32 @@ class ForcesTrainer(BaseTrainer):
                         device=self.device,
                     )
                     self.normalizers["grad_target"].mean.fill_(0)
+
+
+    def load_teacher(self, checkpoint_path):
+        logging.info(f"Loading checkpoint from: {checkpoint_path}")
+        map_location = torch.device("cpu") if self.cpu else self.device
+        checkpoint = torch.load(checkpoint_path, map_location=map_location)
+        # Load model, optimizer, normalizer state dict.
+        # if trained with ddp and want to load in non-ddp, modify keys from
+        # module.module.. -> module..
+        first_key = next(iter(checkpoint["state_dict"]))
+        if (
+            not distutils.initialized() or self.config["noddp"]
+        ) and first_key.split(".")[1] == "module":
+            # No need for OrderedDict since dictionaries are technically ordered
+            # since Python 3.6 and officially ordered since Python 3.7
+            
+            # strange. why module.module?? TODO
+            new_dict = {k[14:]: v for k, v in checkpoint["state_dict"].items()}
+            self.teacher.load_state_dict(new_dict)
+        elif distutils.initialized() and first_key.split(".")[1] != "module":
+            new_dict = {
+                f"module.{k}": v for k, v in checkpoint["state_dict"].items()
+            }
+            self.teacher.load_state_dict(new_dict)
+        else:
+            self.teacher.load_state_dict(checkpoint["state_dict"])
 
     # Takes in a new data source and generates predictions on it.
     @torch.no_grad()
@@ -322,8 +368,15 @@ class ForcesTrainer(BaseTrainer):
 
                 # Forward, loss, backward.
                 with torch.cuda.amp.autocast(enabled=self.scaler is not None):
-                    out = self._forward(batch)
+                    out, t_out = self._distill_forward(batch)
                     loss = self._compute_loss(out, batch)
+                    distill_loss = 0.
+                    # TODO: add lambda
+                    if 'node2node' in self.config['distill_loss']:
+                        distill_loss += self._node2node_distill_loss(out, t_out)
+                    if 'edge2node' in self.config['distill_loss']:
+                        distill_loss += self._edge2node_distill_loss(out, t_out) 
+                    loss += distill_loss * self.config['distill_lambda']
                 loss = self.scaler.scale(loss) if self.scaler else loss
                 self._backward(loss)
                 scale = self.scaler.get_scale() if self.scaler else 1.0
@@ -440,6 +493,49 @@ class ForcesTrainer(BaseTrainer):
 
         return out
 
+
+    def _distill_forward(self, batch_list):
+        # forward pass.
+        if self.config["model_attributes"].get("regress_forces", True):
+            [sfnode, sfedge], [out_energy, out_forces] = self.model.extract_features(batch_list)
+            with torch.no_grad():# TODO: this only suppot using 1 GPU for now. 
+                [tfnode, tfedge], [t_out_energy, t_out_forces] = self.teacher.extract_features(batch_list[0].cuda())
+        else:
+            
+            with torch.no_grad():
+                [tfnode, tfedge], t_out_energy = self.teacher.extract_features(batch_list[0].cuda()) 
+
+        if out_energy.shape[-1] == 1:
+            out_energy = out_energy.view(-1)
+        if t_out_energy.shape[-1] == 1:
+            t_out_energy = t_out_energy.view(-1)
+            
+        out = {
+            "node_feature": sfnode,
+            "edge_feature": sfedge,
+            "energy": out_energy,
+        }
+
+        if self.config["model_attributes"].get("regress_forces", True):
+            out["forces"] = out_forces
+
+        t_out = {
+            "node_feature": tfnode,
+            "edge_feature": tfedge,
+            "energy": t_out_energy,
+        }
+
+        if self.config["teacher_model_attributes"].get("regress_forces", True):
+            t_out["forces"] = t_out_forces
+            
+        return out, t_out
+    
+    def _node2node_distill_loss(self, out, t_out):
+        return torch.nn.functional.mse_loss(out['node_feature'], t_out['node_feature']) 
+        
+    def _edge2node_distill_loss(self, out, t_out):
+        return torch.nn.functional.mse_loss(out['node_feature'], t_out['edge_feature'])       
+         
     def _compute_loss(self, out, batch_list):
         loss = []
 

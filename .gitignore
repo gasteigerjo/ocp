@@ -5,7 +5,8 @@ results
 logs
 *.traj
 experimental
-
+pretrain/
+pretrained/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

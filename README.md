@@ -28,6 +28,14 @@ Projects developed on `ocp`:
 - GemNet-OC [[`arXiv`](https://arxiv.org/abs/2204.02782)] [[`code`](https://github.com/Open-Catalyst-Project/ocp/tree/main/ocpmodels/models/gemnet_oc)]
 - SCN [[`arXiv`](https://arxiv.org/abs/2206.14331)] [[`code`](https://github.com/Open-Catalyst-Project/ocp/tree/main/ocpmodels/models/scn)]
 
+
+## TODO
+- [ ] Find the simplest example to run two models. (i can use the ipynb from peers. )
+- [ ] write edge to node distillation tomorrow. 
+
+
+
+
 ## Installation
 
 See [installation instructions](https://github.com/Open-Catalyst-Project/ocp/blob/main/INSTALL.md).

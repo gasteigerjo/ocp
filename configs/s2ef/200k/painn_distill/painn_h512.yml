@@ -1,0 +1,74 @@
+includes:
+  - configs/s2ef/200k/base.yml
+trainer: distill
+
+model:
+  name: painn
+  hidden_channels: 512
+  num_layers: 6
+  num_rbf: 128
+  cutoff: 12.0
+  max_neighbors: 50
+  scale_file: configs/s2ef/200k/painn/painn_nb6_scaling_factors.pt
+  regress_forces: True
+  direct_forces: True
+  use_pbc: True
+
+optim:
+  batch_size: 32
+  eval_batch_size: 32
+  load_balancing: atoms
+  eval_every: 5000
+  num_workers: 2
+  optimizer: AdamW
+  optimizer_params: {"amsgrad": True}
+  lr_initial: 1.e-4
+  lr_gamma: 0.8
+  scheduler: ReduceLROnPlateau
+  mode: min
+  factor: 0.8
+  patience: 3
+  max_epochs: 80
+  force_coefficient: 100
+  energy_coefficient: 1
+  ema_decay: 0.999
+  clip_grad_norm: 10
+  loss_energy: mae
+  loss_force: l2mae
+  weight_decay: 0  # 2e-6 (TF weight decay) / 1e-4 (lr) = 2e-2
+
+
+# TODO: a very dirty way to do. the best way is to load from a config path to the teacher model.
+teacher_path: pretrained/gemnet_t_direct_h512_2M.pt
+teacher_model:
+  name: gemnet_t
+  num_spherical: 7
+  num_radial: 128
+  num_blocks: 3
+  emb_size_atom: 512
+  emb_size_edge: 512
+  emb_size_trip: 64
+  emb_size_rbf: 16
+  emb_size_cbf: 16
+  emb_size_bil_trip: 64
+  num_before_skip: 1
+  num_after_skip: 2
+  num_concat: 1
+  num_atom: 3
+  cutoff: 6.0
+  max_neighbors: 50
+  rbf:
+    name: gaussian
+  envelope:
+    name: polynomial
+    exponent: 5
+  cbf:
+    name: spherical_harmonics
+  extensive: True
+  otf_graph: False
+  output_init: HeOrthogonal
+  activation: silu
+  scale_file: configs/s2ef/all/gemnet/scaling_factors/gemnet-dT.json
+
+  regress_forces: True
+  direct_forces: True
