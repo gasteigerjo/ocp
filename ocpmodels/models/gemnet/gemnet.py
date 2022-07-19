@@ -712,7 +712,6 @@ class GemNetT(torch.nn.Module):
         # F_st_vec = F_st[:, :, None] * V_st[:, None, :]. vector  
         m2h = scatter(m, idx_t, dim=0, reduce='mean')
         
-        # TODO: we should use gemnet_oc.
         if self.regress_forces:
             if self.direct_forces:
                 # map forces in edge directions

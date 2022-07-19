@@ -13,12 +13,14 @@ model:
   regress_forces: True
   direct_forces: True
   use_pbc: True
+  teacher_dim: 512
+  use_distill: True 
 
 optim:
   batch_size: 32
   eval_batch_size: 32
   load_balancing: atoms
-  eval_every: 5000
+  eval_every: 6250 
   num_workers: 2
   optimizer: AdamW
   optimizer_params: {"amsgrad": True}
@@ -38,26 +40,36 @@ optim:
   weight_decay: 0  # 2e-6 (TF weight decay) / 1e-4 (lr) = 2e-2
 
 
-# TODO: we should use gemnet_oc as teacher not gemnet_t
-# TODO: a very dirty way to do. the best way is to load from a config path to the teacher model.
-teacher_path: pretrained/gemnet_t_direct_h512_2M.pt
+teacher_path: pretrained/gemnet_oc_base_s2ef_2M.pt
 teacher_model:
-  name: gemnet_t
+  name: gemnet_oc
   num_spherical: 7
   num_radial: 128
-  num_blocks: 3
-  emb_size_atom: 512
+  num_blocks: 4
+  emb_size_atom: 256
   emb_size_edge: 512
-  emb_size_trip: 64
+  emb_size_trip_in: 64
+  emb_size_trip_out: 64
+  emb_size_quad_in: 32
+  emb_size_quad_out: 32
+  emb_size_aint_in: 64
+  emb_size_aint_out: 64
   emb_size_rbf: 16
   emb_size_cbf: 16
-  emb_size_bil_trip: 64
-  num_before_skip: 1
+  emb_size_sbf: 32
+  num_before_skip: 2
   num_after_skip: 2
   num_concat: 1
   num_atom: 3
-  cutoff: 6.0
-  max_neighbors: 50
+  num_output_afteratom: 3
+  cutoff: 12.0
+  cutoff_qint: 12.0
+  cutoff_aeaint: 12.0
+  cutoff_aint: 12.0
+  max_neighbors: 30
+  max_neighbors_qint: 8
+  max_neighbors_aeaint: 20
+  max_neighbors_aint: 1000
   rbf:
     name: gaussian
   envelope:
@@ -65,11 +77,22 @@ teacher_model:
     exponent: 5
   cbf:
     name: spherical_harmonics
+  sbf:
+    name: legendre_outer
   extensive: True
-  otf_graph: False
   output_init: HeOrthogonal
   activation: silu
-  scale_file: configs/s2ef/all/gemnet/scaling_factors/gemnet-dT.json
+  scale_file: configs/s2ef/all/gemnet/scaling_factors/gemnet-oc.pt
 
   regress_forces: True
   direct_forces: True
+  forces_coupled: False
+
+  quad_interaction: True
+  atom_edge_interaction: True
+  edge_atom_interaction: True
+  atom_interaction: True
+
+  num_atom_emb_layers: 2
+  num_global_out_layers: 2
+  qint_tags: [1, 2] 

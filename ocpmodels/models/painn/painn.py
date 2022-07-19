@@ -53,6 +53,9 @@ from .scaling import ScaledModule, ScalingFactor
 from .utils import get_edge_id, repeat_blocks
 
 
+
+# TODO: the best way for using distillation is to implement a DistillModel class, and initize student and teacher model there.
+# TODO: here, I am doing a dirty code, where I just pass distill_args to student model (painn)
 @registry.register_model("painn")
 class PaiNN(ScaledModule):
     r"""PaiNN model based on the description in Schütt et al. (2021):
@@ -77,6 +80,9 @@ class PaiNN(ScaledModule):
         direct_forces=True,
         use_pbc=True,
         otf_graph=True,
+        teacher_dim=512,
+        use_distill=False, 
+        **kwargs 
     ):
         super(PaiNN, self).__init__()
 
@@ -91,6 +97,12 @@ class PaiNN(ScaledModule):
         self.otf_graph = otf_graph
         self.use_pbc = use_pbc
 
+        # TODO: for distillation
+        if use_distill:
+            if hidden_channels != teacher_dim:
+                self.s2t_mapping = nn.Linear(hidden_channels, teacher_dim)
+            else:
+                self.s2t_mapping = nn.Identity() 
         # Borrowed from GemNet.
         self.symmetric_edge_symmetrization = False
 
@@ -514,10 +526,10 @@ class PaiNN(ScaledModule):
                     )[0]
                 )
             # return [x_list, vec_list], [energy, forces]
-            return [x, None], [energy, forces]
+            return [self.s2t_mapping(x), None], [energy, forces]
         else:
             # return [x_list, vec_list], energy
-            return [x, None], energy
+            return [self.s2t_mapping(x), None], energy
         
     @property
     def num_params(self):
