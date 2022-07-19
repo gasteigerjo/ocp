@@ -8,6 +8,7 @@ import datetime
 import errno
 import json
 import logging
+import shortuuid
 import os
 import random
 import subprocess
@@ -100,7 +101,7 @@ class BaseTrainer(ABC):
                 self.timestamp_id = timestamp
         else:
             self.timestamp_id = timestamp_id
-
+        identifier = '-'.join([self.timestamp_id, shortuuid.uuid()])
         try:
             commit_hash = (
                 subprocess.check_output(
