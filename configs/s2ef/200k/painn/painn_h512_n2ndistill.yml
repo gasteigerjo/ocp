@@ -1,6 +1,7 @@
 includes:
   - configs/s2ef/200k/base.yml
 trainer: distill
+distill_loss: node2node
 
 model:
   name: painn
