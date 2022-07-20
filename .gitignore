@@ -11,6 +11,7 @@ pretrained/
 __pycache__/
 *.py[cod]
 *$py.class
+*.tar 
 
 # C extensions
 *.so

@@ -399,6 +399,8 @@ def build_config(args, args_override):
     config["amp"] = args.amp
     config["checkpoint"] = args.checkpoint
     config["cpu"] = args.cpu
+    if not config["identifier"]:
+       config["identifier"] = '-'.join(str(args.config_yml).split('/')[1:])[:-4]
     # Submit
     config["submit"] = args.submit
     config["summit"] = args.summit

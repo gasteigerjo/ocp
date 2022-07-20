@@ -391,7 +391,9 @@ class DistillForcesTrainer(BaseTrainer):
                 self.metrics = self.evaluator.update(
                     "loss", loss.item() / scale, self.metrics
                 )
-
+                self.metrics = self.evaluator.update(
+                    "distill_loss", distill_loss.item(), self.metrics
+                )
                 # Log metrics.
                 log_dict = {k: self.metrics[k]["metric"] for k in self.metrics}
                 log_dict.update(
