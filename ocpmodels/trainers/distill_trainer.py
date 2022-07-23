@@ -13,12 +13,14 @@ from pathlib import Path
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 import torch_geometric
 from tqdm import tqdm
 
 from ocpmodels.common import distutils
 from ocpmodels.common.registry import registry
 from ocpmodels.common.relaxation.ml_relaxation import ml_relax
+from ocpmodels.common.transforms import AddNoise, RandomJitter
 from ocpmodels.common.utils import check_traj_files
 from ocpmodels.modules.evaluator import Evaluator
 from ocpmodels.modules.normalizer import Normalizer
@@ -83,8 +85,8 @@ class DistillForcesTrainer(BaseTrainer):
         cpu=False,
         slurm={},
         noddp=False,
-        config=None, 
-        **kwargs,  
+        config=None,
+        **kwargs,
     ):
         super().__init__(
             task=task,
@@ -107,13 +109,13 @@ class DistillForcesTrainer(BaseTrainer):
             slurm=slurm,
             noddp=noddp,
         )
-        # TODO: the way using config is quite strange. Clean the code. 
-        teacher_config = config['teacher_model']
-        teacher_model = teacher_config.pop('name')
+        # TODO: the way using config is quite strange. Clean the code.
+        teacher_config = config["teacher_model"]
+        teacher_model = teacher_config.pop("name")
         teacher_model_attributes = teacher_config
-        self.config['teacher_model_attributes'] = teacher_model_attributes
-        self.config['distill_loss'] = config['distill_loss']
-        self.config['distill_lambda'] = config['distill_lambda']
+        self.config["teacher_model_attributes"] = teacher_model_attributes
+        self.config["distill_loss"] = config["distill_loss"]
+        self.config["distill_lambda"] = config["distill_lambda"]
         self.teacher = registry.get_model_class(teacher_model)(
             self.loader.dataset[0].x.shape[-1]
             if self.loader
@@ -124,8 +126,15 @@ class DistillForcesTrainer(BaseTrainer):
             self.num_targets,
             **teacher_model_attributes,
         ).to(self.device)
-        self.load_teacher(config['teacher_path'])
+        self.load_teacher(config["teacher_path"])
         self.teacher.eval()
+        if "randomjitter" in config["distill_loss"]:
+            self.transform = RandomJitter(
+                {"max_translation": 0.1, "translation_probability": 1.0}
+            )
+        elif "adversarial_jitter" in config["distill_loss"]:
+            self.transform = AddNoise()
+            self.n_adversarial_steps = 10
 
     def load_task(self):
         logging.info(f"Loading dataset: {self.config['task']['dataset']}")
@@ -167,7 +176,6 @@ class DistillForcesTrainer(BaseTrainer):
                     )
                     self.normalizers["grad_target"].mean.fill_(0)
 
-
     def load_teacher(self, checkpoint_path):
         logging.info(f"Loading checkpoint from: {checkpoint_path}")
         map_location = torch.device("cpu") if self.cpu else self.device
@@ -181,7 +189,7 @@ class DistillForcesTrainer(BaseTrainer):
         ) and first_key.split(".")[1] == "module":
             # No need for OrderedDict since dictionaries are technically ordered
             # since Python 3.6 and officially ordered since Python 3.7
-            
+
             # strange. why module.module?? TODO
             new_dict = {k[14:]: v for k, v in checkpoint["state_dict"].items()}
             self.teacher.load_state_dict(new_dict)
@@ -328,7 +336,7 @@ class DistillForcesTrainer(BaseTrainer):
                     disable_tqdm=disable_eval_tqdm,
                 )
 
-    def train(self, disable_eval_tqdm=False):
+    def train(self, disable_eval_tqdm=False):  # noqa: C901
         eval_every = self.config["optim"].get(
             "eval_every", len(self.train_loader)
         )
@@ -370,13 +378,36 @@ class DistillForcesTrainer(BaseTrainer):
                 with torch.cuda.amp.autocast(enabled=self.scaler is not None):
                     out, t_out = self._distill_forward(batch)
                     loss = self._compute_loss(out, batch)
-                    distill_loss = 0.
+                    distill_loss = 0.0
                     # TODO: add lambda
-                    if 'node2node' in self.config['distill_loss']:
-                        distill_loss += self._node2node_distill_loss(out, t_out)
-                    if 'edge2node' in self.config['distill_loss']:
-                        distill_loss += self._edge2node_distill_loss(out, t_out) 
-                    loss += distill_loss * self.config['distill_lambda']
+                    if "node2node" in self.config["distill_loss"]:
+                        distill_loss += self._node2node_distill_loss(
+                            out, t_out
+                        )
+                    if "edge2node" in self.config["distill_loss"]:
+                        distill_loss += self._edge2node_distill_loss(
+                            out, t_out
+                        )
+                    if "randomjitter" in self.config["distill_loss"]:
+                        batch_augmented = [
+                            self.transform(b.clone()) for b in batch
+                        ]
+                        out_aug, t_out_aug = self._distill_forward(
+                            batch_augmented
+                        )
+                        distill_loss += self._compute_loss(
+                            out_aug, batch_augmented, teacher_output=t_out_aug
+                        )
+                    if "adversarial_noise" in self.config["distill_loss"]:
+                        batch_augmented += self._adversarial_attack(batch)
+                        out_aug, t_out_aug = self._distill_forward(
+                            batch_augmented
+                        )
+                        distill_loss += self._compute_loss(
+                            out_aug, batch_augmented, teacher_output=t_out_aug
+                        )
+
+                    loss += distill_loss * self.config["distill_lambda"]
                 loss = self.scaler.scale(loss) if self.scaler else loss
                 self._backward(loss)
                 scale = self.scaler.get_scale() if self.scaler else 1.0
@@ -495,23 +526,50 @@ class DistillForcesTrainer(BaseTrainer):
 
         return out
 
+    def _adversarial_attack(self, batch_list):
+        delta_list = [
+            torch.normal(torch.zeros_like(batch), [0.05], requires_grad=True)
+            for batch in batch_list
+        ]
+        for _ in range(self.n_adversarial_steps):
+            batch_list = [
+                self.transform(batch.clone(), delta)
+                for batch, delta in zip(batch_list, delta_list)
+            ]
+            out, t_out = self._distill_forward(batch_list)
+            loss = F.mse_loss(out["forces"], t_out["forces"])
+            loss.backward()
+            delta_list = [
+                delta + self.adversarial_lr * delta.grad
+                for delta in delta_list
+            ]
+            delta_list = [delta.grad.zero_() for delta in delta_list]
+        return batch_list
 
     def _distill_forward(self, batch_list):
         # forward pass.
         if self.config["model_attributes"].get("regress_forces", True):
-            [sfnode, sfedge], [out_energy, out_forces] = self.model.extract_features(batch_list)
-            with torch.no_grad():# TODO: this only suppot using 1 GPU for now. 
-                [tfnode, tfedge], [t_out_energy, t_out_forces] = self.teacher.extract_features(batch_list[0].cuda())
+            [sfnode, sfedge], [
+                out_energy,
+                out_forces,
+            ] = self.model.extract_features(batch_list)
+            with torch.no_grad():  # TODO: this only suppot using 1 GPU for now.
+                [tfnode, tfedge], [
+                    t_out_energy,
+                    t_out_forces,
+                ] = self.teacher.extract_features(batch_list[0].cuda())
         else:
-            
+
             with torch.no_grad():
-                [tfnode, tfedge], t_out_energy = self.teacher.extract_features(batch_list[0].cuda()) 
+                [tfnode, tfedge], t_out_energy = self.teacher.extract_features(
+                    batch_list[0].cuda()
+                )
 
         if out_energy.shape[-1] == 1:
             out_energy = out_energy.view(-1)
         if t_out_energy.shape[-1] == 1:
             t_out_energy = t_out_energy.view(-1)
-            
+
         out = {
             "node_feature": sfnode,
             "edge_feature": sfedge,
@@ -529,22 +587,29 @@ class DistillForcesTrainer(BaseTrainer):
 
         if self.config["teacher_model_attributes"].get("regress_forces", True):
             t_out["forces"] = t_out_forces
-            
+
         return out, t_out
-    
+
     def _node2node_distill_loss(self, out, t_out):
-        return torch.nn.functional.mse_loss(out['node_feature'], t_out['node_feature']) 
-        
+        return torch.nn.functional.mse_loss(
+            out["node_feature"], t_out["node_feature"]
+        )
+
     def _edge2node_distill_loss(self, out, t_out):
-        return torch.nn.functional.mse_loss(out['node_feature'], t_out['edge_feature'])       
-         
-    def _compute_loss(self, out, batch_list):
+        return torch.nn.functional.mse_loss(
+            out["node_feature"], t_out["edge_feature"]
+        )
+
+    def _compute_loss(self, out, batch_list, teacher_output=None):
         loss = []
 
         # Energy loss.
-        energy_target = torch.cat(
-            [batch.y.to(self.device) for batch in batch_list], dim=0
-        )
+        if teacher_output is not None:
+            energy_target = teacher_output["energy"]
+        else:
+            energy_target = torch.cat(
+                [batch.y.to(self.device) for batch in batch_list], dim=0
+            )
         if self.normalizer.get("normalize_labels", False):
             energy_target = self.normalizers["target"].norm(energy_target)
         energy_mult = self.config["optim"].get("energy_coefficient", 1)
@@ -554,9 +619,13 @@ class DistillForcesTrainer(BaseTrainer):
 
         # Force loss.
         if self.config["model_attributes"].get("regress_forces", True):
-            force_target = torch.cat(
-                [batch.force.to(self.device) for batch in batch_list], dim=0
-            )
+            if teacher_output is not None:
+                force_target = teacher_output["forces"]
+            else:
+                force_target = torch.cat(
+                    [batch.force.to(self.device) for batch in batch_list],
+                    dim=0,
+                )
             if self.normalizer.get("normalize_labels", False):
                 force_target = self.normalizers["grad_target"].norm(
                     force_target
