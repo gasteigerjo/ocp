@@ -124,3 +124,29 @@ class RandomJitter(object):
 
     def __repr__(self) -> str:
         return f'{self.__class__.__name__}({{"max_translation": {self.translate}, "translation_probability": {self.prob}}})'
+
+
+class AddNoise(object):
+    r"""With a certain probability translates node positions by randomly sampled translation values
+    within a given interval (functional name: :obj:`random_jitter`).
+    In contrast to other random transformations,
+    translation is applied separately at each position
+
+    Args:
+        translate (sequence or float or int): Maximum translation in each
+            dimension, defining the range
+            :math:`(-\mathrm{translate}, +\mathrm{translate})` to sample from.
+            If :obj:`translate` is a number instead of a sequence, the same
+            range is used for each dimension.
+        prob (float): Probability (0 to 1) of translating positions
+    """
+
+    def __call__(self, data, delta):
+        non_fixed_elements = ~data.fixed.bool()
+        data.pos[non_fixed_elements] = (
+            data.pos[non_fixed_elements] + delta[non_fixed_elements]
+        )
+        return data
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}()"
