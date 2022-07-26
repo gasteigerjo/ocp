@@ -149,6 +149,7 @@ class DistillForcesTrainer(BaseTrainer):
             )
         elif "adversarial_jitter" in config["distill_loss"]:
             self.transform = AddNoise()
+            self.adversarial_lr = 0.01
             self.n_adversarial_steps = 10
 
     def load_task(self):
@@ -585,10 +586,11 @@ class DistillForcesTrainer(BaseTrainer):
             out, t_out = self._distill_forward_energy_only(batch_list)
             loss = F.mse_loss(out["forces"], t_out["forces"])
             loss.backward()
-            delta_list = [
-                delta + self.adversarial_lr * delta.grad
-                for delta in delta_list
-            ]
+            with torch.no_grad():
+                delta_list = [
+                    delta + self.adversarial_lr * delta.grad
+                    for delta in delta_list
+                ]
             delta_list = [delta.grad.zero_() for delta in delta_list]
         return batch_list
 
