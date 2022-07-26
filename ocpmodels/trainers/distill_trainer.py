@@ -381,12 +381,12 @@ class DistillForcesTrainer(BaseTrainer):
                     distill_loss = 0.0
                     # TODO: add lambda
                     if "node2node" in self.config["distill_loss"]:
-                        out, t_out = self._forward(batch)
+                        out, t_out = self._distill_forward(batch)
                         distill_loss += self._node2node_distill_loss(
                             out, t_out
                         )
                     if "edge2node" in self.config["distill_loss"]:
-                        out, t_out = self._forward(batch)
+                        out, t_out = self._distill_forward(batch)
                         distill_loss += self._edge2node_distill_loss(
                             out, t_out
                         )
