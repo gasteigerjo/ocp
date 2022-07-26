@@ -15,9 +15,15 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import torch_geometric
+from torch.nn.parallel.distributed import DistributedDataParallel
 from tqdm import tqdm
 
 from ocpmodels.common import distutils
+from ocpmodels.common.data_parallel import (
+    BalancedBatchSampler,
+    OCPDataParallel,
+    ParallelCollater,
+)
 from ocpmodels.common.registry import registry
 from ocpmodels.common.relaxation.ml_relaxation import ml_relax
 from ocpmodels.common.transforms import AddNoise, RandomJitter
@@ -127,6 +133,15 @@ class DistillForcesTrainer(BaseTrainer):
             **teacher_model_attributes,
         ).to(self.device)
         self.load_teacher(config["teacher_path"])
+        self.teacher = OCPDataParallel(
+            self.teacher,
+            output_device=self.device,
+            num_gpus=1 if not self.cpu else 0,
+        )
+        if distutils.initialized() and not self.config["noddp"]:
+            self.teacher = DistributedDataParallel(
+                self.teacer, device_ids=[self.device]
+            )
         self.teacher.eval()
         if "randomjitter" in config["distill_loss"]:
             self.transform = RandomJitter(
