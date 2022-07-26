@@ -394,22 +394,16 @@ class DistillForcesTrainer(BaseTrainer):
                         batch_augmented = [
                             self.transform(b.clone()) for b in batch
                         ]
-                        out_aug = self._forward_energy_only(
-                            batch_augmented, self.model
-                        )
-                        t_out_aug = self._forward_energy_only(
-                            batch_augmented, self.teacher
+                        out_aug, t_out_aug = self._distill_forward_energy_only(
+                            batch_augmented
                         )
                         distill_loss += self._compute_loss(
                             out_aug, batch_augmented, teacher_output=t_out_aug
                         )
                     if "adversarial_noise" in self.config["distill_loss"]:
                         batch_augmented += self._adversarial_attack(batch)
-                        out_aug = self._forward_energy_only(
-                            batch_augmented, self.model
-                        )
-                        t_out_aug = self._forward_energy_only(
-                            batch_augmented, self.teacher
+                        out_aug, t_out_aug = self._distill_forward_energy_only(
+                            batch_augmented
                         )
                         distill_loss += self._compute_loss(
                             out_aug, batch_augmented, teacher_output=t_out_aug
@@ -534,24 +528,30 @@ class DistillForcesTrainer(BaseTrainer):
 
         return out
 
-    def _forward_energy_only(self, batch_list, model):
+    def _distill_forward_energy_only(self, batch_list):
         # forward pass.
         if self.config["model_attributes"].get("regress_forces", True):
-            out_energy, out_forces = model(batch_list)
+            out_energy, out_forces = self.model(batch_list)
+            t_out_energy, t_out_forces = self.teacher(batch_list)
         else:
-            out_energy = model(batch_list)
+            out_energy = self.model(batch_list)
+            t_out_energy = self.teacher(batch_list)
 
         if out_energy.shape[-1] == 1:
             out_energy = out_energy.view(-1)
+        if t_out_energy.shape[-1] == 1:
+            t_out_energy = t_out_energy.view(-1)
 
         out = {
             "energy": out_energy,
         }
+        t_out = {"energy": t_out_energy}
 
         if self.config["model_attributes"].get("regress_forces", True):
             out["forces"] = out_forces
+            t_out["forces"] = t_out_forces
 
-        return out
+        return out, t_out
 
     def _adversarial_attack(self, batch_list):
         delta_list = [
@@ -567,8 +567,7 @@ class DistillForcesTrainer(BaseTrainer):
                 self.transform(batch.clone(), delta)
                 for batch, delta in zip(batch_list, delta_list)
             ]
-            out = self._forward_energy_only(batch_list, self.model)
-            t_out = self._forward_energy_only(batch_list, self.teacher)
+            out, t_out = self._distill_forward_energy_only(batch_list)
             loss = F.mse_loss(out["forces"], t_out["forces"])
             loss.backward()
             delta_list = [
