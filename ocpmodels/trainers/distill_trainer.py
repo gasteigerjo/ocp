@@ -25,6 +25,16 @@ from ocpmodels.modules.normalizer import Normalizer
 from ocpmodels.trainers.base_trainer import BaseTrainer
 
 
+def node2node_distill_loss(out, t_out):
+    return torch.nn.functional.mse_loss(out['n2n_feature'], t_out['node_feature']) 
+    
+def edge2node_distill_loss(out, t_out):
+    return torch.nn.functional.mse_loss(out['e2n_feature'], t_out['e2n_feature'])       
+
+def vec2vec_distill_loss(out, t_out):
+    return torch.nn.functional.mse_loss(out['vector_feature'], t_out['vector_feature']) 
+
+
 @registry.register_trainer("distill")
 class DistillForcesTrainer(BaseTrainer):
     """
@@ -351,6 +361,12 @@ class DistillForcesTrainer(BaseTrainer):
         # to prevent inconsistencies due to different batch size in checkpoint.
         start_epoch = self.step // len(self.train_loader)
 
+        distill_fns = self.config['distill_loss'].split(',')
+        if isinstance(self.config['distill_lambda'], float):
+            distill_lambda = [self.config['distill_lambda']] * len(distill_fns) 
+        else:
+            distill_lambda = self.config['distill_lambda']
+
         for epoch_int in range(
             start_epoch, self.config["optim"]["max_epochs"]
         ):
@@ -371,12 +387,10 @@ class DistillForcesTrainer(BaseTrainer):
                     out, t_out = self._distill_forward(batch)
                     loss = self._compute_loss(out, batch)
                     distill_loss = 0.
-                    # TODO: add lambda
-                    if 'node2node' in self.config['distill_loss']:
-                        distill_loss += self._node2node_distill_loss(out, t_out)
-                    if 'edge2node' in self.config['distill_loss']:
-                        distill_loss += self._edge2node_distill_loss(out, t_out) 
-                    loss += distill_loss * self.config['distill_lambda']
+                    
+                    for loss_idx, loss_type in enumerate(distill_fns):
+                        distill_loss += eval(loss_type)(out, t_out) * distill_lambda[loss_idx]
+                    loss += distill_loss            
                 loss = self.scaler.scale(loss) if self.scaler else loss
                 self._backward(loss)
                 scale = self.scaler.get_scale() if self.scaler else 1.0
@@ -499,13 +513,13 @@ class DistillForcesTrainer(BaseTrainer):
     def _distill_forward(self, batch_list):
         # forward pass.
         if self.config["model_attributes"].get("regress_forces", True):
-            [sfnode, sfedge], [out_energy, out_forces] = self.model.extract_features(batch_list)
+            [sfnode, sfe2n, sfvec], [out_energy, out_forces] = self.model.extract_features(batch_list)
             with torch.no_grad():# TODO: this only suppot using 1 GPU for now. 
-                [tfnode, tfedge], [t_out_energy, t_out_forces] = self.teacher.extract_features(batch_list[0].cuda())
+                [tfnode, tfe2n, tfvec], [t_out_energy, t_out_forces] = self.teacher.extract_features(batch_list[0].cuda())
         else:
-            
+            [sfnode, sfe2n, sfvec], out_energy  = self.model.extract_features(batch_list)
             with torch.no_grad():
-                [tfnode, tfedge], t_out_energy = self.teacher.extract_features(batch_list[0].cuda()) 
+                [tfnode, tfe2n,], t_out_energy = self.teacher.extract_features(batch_list[0].cuda()) 
 
         if out_energy.shape[-1] == 1:
             out_energy = out_energy.view(-1)
@@ -513,8 +527,9 @@ class DistillForcesTrainer(BaseTrainer):
             t_out_energy = t_out_energy.view(-1)
             
         out = {
-            "node_feature": sfnode,
-            "edge_feature": sfedge,
+            "n2n_feature": sfnode,
+            "e2n_feature": sfe2n,
+            "vector_feature": sfvec,
             "energy": out_energy,
         }
 
@@ -523,7 +538,8 @@ class DistillForcesTrainer(BaseTrainer):
 
         t_out = {
             "node_feature": tfnode,
-            "edge_feature": tfedge,
+            "e2n_feature": tfe2n,
+            "vector_feature": tfvec,
             "energy": t_out_energy,
         }
 
@@ -532,12 +548,9 @@ class DistillForcesTrainer(BaseTrainer):
             
         return out, t_out
     
-    def _node2node_distill_loss(self, out, t_out):
-        return torch.nn.functional.mse_loss(out['node_feature'], t_out['node_feature']) 
-        
-    def _edge2node_distill_loss(self, out, t_out):
-        return torch.nn.functional.mse_loss(out['node_feature'], t_out['edge_feature'])       
+ 
          
+               
     def _compute_loss(self, out, batch_list):
         loss = []
 

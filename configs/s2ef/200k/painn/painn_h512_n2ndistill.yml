@@ -1,7 +1,8 @@
 includes:
   - configs/s2ef/200k/base.yml
 trainer: distill
-distill_loss: node2node
+distill_loss: node2node_distill_loss 
+distill_lambda: 100.0
 
 model:
   name: painn
@@ -14,20 +15,28 @@ model:
   regress_forces: True
   direct_forces: True
   use_pbc: True
-  teacher_dim: 256
+  teacher_node_dim: 256
+  teacher_edge_dim: 512
   use_distill: True 
 
 optim:
   batch_size: 32
   eval_batch_size: 32
   load_balancing: atoms
-  eval_every: 6250 
-  num_workers: 2
+  eval_every: 6250 # 200,000 samples. = 6250 iterations per epoch (batch size 32) 
+  num_workers: 4
   optimizer: AdamW
   optimizer_params: {"amsgrad": True}
-  lr_initial: 1.e-4
-  lr_gamma: 0.8
-  scheduler: ReduceLROnPlateau
+  lr_initial: 5.e-4
+  lr_gamma: 0.45
+  # scheduler: ReduceLROnPlateau
+  lr_milestones:
+  - 160000
+  - 320000
+  - 480000
+  - 640000
+  warmup_steps: 80000
+  warmup_factor: 0.2
   mode: min
   factor: 0.8
   patience: 3
@@ -38,8 +47,6 @@ optim:
   clip_grad_norm: 10
   loss_energy: mae
   loss_force: l2mae
-  weight_decay: 0  # 2e-6 (TF weight decay) / 1e-4 (lr) = 2e-2
-
 
 teacher_path: pretrained/gemnet_oc_base_s2ef_2M.pt
 teacher_model:

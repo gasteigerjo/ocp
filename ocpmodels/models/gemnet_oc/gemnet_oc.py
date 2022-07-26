@@ -4,6 +4,7 @@ This source code is licensed under the MIT license found in the
 LICENSE file in the root directory of this source tree.
 """
 
+from dis import dis
 import logging
 import os
 from typing import Optional
@@ -235,6 +236,7 @@ class GemNetOC(ScaledModule):
         atom_interaction: bool = False,
         scale_basis: bool = False,
         qint_tags: list = [0, 1, 2],
+        distill_reduce: str = 'sum', 
         **kwargs,  # backwards compatibility with deprecated arguments
     ):
         super().__init__()
@@ -244,7 +246,9 @@ class GemNetOC(ScaledModule):
         assert num_blocks > 0
         self.num_blocks = num_blocks
         self.extensive = extensive
-
+        
+        self.distill_reduce = distill_reduce
+        
         self.atom_edge_interaction = atom_edge_interaction
         self.edge_atom_interaction = edge_atom_interaction
         self.atom_interaction = atom_interaction
@@ -1488,8 +1492,8 @@ class GemNetOC(ScaledModule):
             )  # (nMolecules, num_targets)
 
         # TODO: here is for edge2node
-        m2h = scatter(m, idx_t, dim=0, reduce='mean')
-        
+        m2h = scatter(m, idx_t, dim=0, reduce=self.distill_reduce)
+        m2v = scatter(m.unsqueeze(1) * main_graph["vector"].unsqueeze(-1), idx_t, dim=0, reduce=self.distill_reduce)
         
         if self.regress_forces:
             if self.direct_forces:
@@ -1524,7 +1528,7 @@ class GemNetOC(ScaledModule):
 
             E_t = E_t.squeeze(1)  # (num_molecules)
             F_t = F_t.squeeze(1)  # (num_atoms, 3)
-            return [h, m2h], [E_t, F_t]  # (nMolecules, num_targets), (nAtoms, 3)
+            return [h, m2h, m2v], [E_t, F_t]  # (nMolecules, num_targets), (nAtoms, 3)
         else:
             E_t = E_t.squeeze(1)  # (num_molecules)
-            return [h, m2h], E_t
+            return [h, m2h, m2v], E_t

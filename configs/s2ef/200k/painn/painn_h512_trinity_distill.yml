@@ -1,8 +1,8 @@
 includes:
   - configs/s2ef/200k/base.yml
 trainer: distill
-distill_loss: edge2node_distill_loss 
-distill_lambda: 0.05
+distill_loss: node2node_distill_loss,edge2node_distill_loss,vec2vec_distill_loss 
+distill_lambda: [100.0, 0.05, 1.0]
 
 model:
   name: painn
