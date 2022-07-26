@@ -376,15 +376,17 @@ class DistillForcesTrainer(BaseTrainer):
 
                 # Forward, loss, backward.
                 with torch.cuda.amp.autocast(enabled=self.scaler is not None):
-                    out, t_out = self._distill_forward(batch)
+                    out = self._forward(batch)
                     loss = self._compute_loss(out, batch)
                     distill_loss = 0.0
                     # TODO: add lambda
                     if "node2node" in self.config["distill_loss"]:
+                        out, t_out = self._forward(batch)
                         distill_loss += self._node2node_distill_loss(
                             out, t_out
                         )
                     if "edge2node" in self.config["distill_loss"]:
+                        out, t_out = self._forward(batch)
                         distill_loss += self._edge2node_distill_loss(
                             out, t_out
                         )
@@ -392,16 +394,22 @@ class DistillForcesTrainer(BaseTrainer):
                         batch_augmented = [
                             self.transform(b.clone()) for b in batch
                         ]
-                        out_aug, t_out_aug = self._distill_forward(
-                            batch_augmented
+                        out_aug = self._forward_energy_only(
+                            batch_augmented, self.model
+                        )
+                        t_out_aug = self._forward_energy_only(
+                            batch_augmented, self.teacher
                         )
                         distill_loss += self._compute_loss(
                             out_aug, batch_augmented, teacher_output=t_out_aug
                         )
                     if "adversarial_noise" in self.config["distill_loss"]:
                         batch_augmented += self._adversarial_attack(batch)
-                        out_aug, t_out_aug = self._distill_forward(
-                            batch_augmented
+                        out_aug = self._forward_energy_only(
+                            batch_augmented, self.model
+                        )
+                        t_out_aug = self._forward_energy_only(
+                            batch_augmented, self.teacher
                         )
                         distill_loss += self._compute_loss(
                             out_aug, batch_augmented, teacher_output=t_out_aug
@@ -526,9 +534,32 @@ class DistillForcesTrainer(BaseTrainer):
 
         return out
 
+    def _forward_energy_only(self, batch_list, model):
+        # forward pass.
+        if self.config["model_attributes"].get("regress_forces", True):
+            out_energy, out_forces = model(batch_list)
+        else:
+            out_energy = model(batch_list)
+
+        if out_energy.shape[-1] == 1:
+            out_energy = out_energy.view(-1)
+
+        out = {
+            "energy": out_energy,
+        }
+
+        if self.config["model_attributes"].get("regress_forces", True):
+            out["forces"] = out_forces
+
+        return out
+
     def _adversarial_attack(self, batch_list):
         delta_list = [
-            torch.normal(torch.zeros_like(batch), [0.05], requires_grad=True)
+            torch.normal(
+                torch.zeros_like(batch),
+                torch.tensor([0.05]),
+                requires_grad=True,
+            )
             for batch in batch_list
         ]
         for _ in range(self.n_adversarial_steps):
@@ -536,7 +567,8 @@ class DistillForcesTrainer(BaseTrainer):
                 self.transform(batch.clone(), delta)
                 for batch, delta in zip(batch_list, delta_list)
             ]
-            out, t_out = self._distill_forward(batch_list)
+            out = self._forward_energy_only(batch_list, self.model)
+            t_out = self._forward_energy_only(batch_list, self.teacher)
             loss = F.mse_loss(out["forces"], t_out["forces"])
             loss.backward()
             delta_list = [
