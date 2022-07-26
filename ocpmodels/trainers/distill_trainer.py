@@ -14,6 +14,7 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn.functional as F
+import torch.optim as optim
 import torch_geometric
 from torch.nn.parallel.distributed import DistributedDataParallel
 from tqdm import tqdm
@@ -416,8 +417,8 @@ class DistillForcesTrainer(BaseTrainer):
                         distill_loss += self._compute_loss(
                             out_aug, batch_augmented, teacher_output=t_out_aug
                         )
-                    if "adversarial_noise" in self.config["distill_loss"]:
-                        batch_augmented += self._adversarial_attack(batch)
+                    if "adversarial_jitter" in self.config["distill_loss"]:
+                        batch_augmented = self._adversarial_attack(batch)
                         out_aug, t_out_aug = self._distill_forward_energy_only(
                             batch_augmented
                         )
@@ -570,29 +571,30 @@ class DistillForcesTrainer(BaseTrainer):
         return out, t_out
 
     def _adversarial_attack(self, batch_list):
-        delta_list = [
-            torch.normal(
-                torch.zeros_like(batch),
-                torch.tensor([0.05]),
-                requires_grad=True,
-            )
-            for batch in batch_list
-        ]
+        print("inside _adversarial_attack")
+        with torch.no_grad():
+            delta_list = [
+                torch.empty(
+                    batch.pos.shape, requires_grad=True, device=self.device
+                ).normal_(0, 0.05)
+                for batch in batch_list
+            ]
+        opt = optim.SGD(delta_list, lr=0.01)
         for _ in range(self.n_adversarial_steps):
-            batch_list = [
+            opt.zero_grad()
+            batch_list2 = [
                 self.transform(batch.clone(), delta)
                 for batch, delta in zip(batch_list, delta_list)
             ]
-            out, t_out = self._distill_forward_energy_only(batch_list)
-            loss = F.mse_loss(out["forces"], t_out["forces"])
+            out, t_out = self._distill_forward_energy_only(batch_list2)
+            loss = -F.mse_loss(out["forces"], t_out["forces"])
+            print(loss.item())
             loss.backward()
-            with torch.no_grad():
-                delta_list = [
-                    delta + self.adversarial_lr * delta.grad
-                    for delta in delta_list
-                ]
-            delta_list = [delta.grad.zero_() for delta in delta_list]
-        return batch_list
+            opt.step()
+        return [
+            self.transform(batch.clone(), delta)
+            for batch, delta in zip(batch_list, delta_list)
+        ]
 
     def _distill_forward(self, batch_list):
         # forward pass.
