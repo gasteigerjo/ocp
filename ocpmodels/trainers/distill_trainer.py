@@ -571,7 +571,6 @@ class DistillForcesTrainer(BaseTrainer):
         return out, t_out
 
     def _adversarial_attack(self, batch_list):
-        print("inside _adversarial_attack")
         with torch.no_grad():
             delta_list = [
                 torch.empty(
@@ -579,20 +578,22 @@ class DistillForcesTrainer(BaseTrainer):
                 ).normal_(0, 0.05)
                 for batch in batch_list
             ]
-        opt = optim.SGD(delta_list, lr=0.01)
+        opt = optim.SGD(delta_list, lr=0.1)
         for _ in range(self.n_adversarial_steps):
-            opt.zero_grad()
-            batch_list2 = [
+            batch_list_noise = [
                 self.transform(batch.clone(), delta)
                 for batch, delta in zip(batch_list, delta_list)
             ]
-            out, t_out = self._distill_forward_energy_only(batch_list2)
-            loss = -F.mse_loss(out["forces"], t_out["forces"])
+            opt.zero_grad()
+            out, t_out = self._distill_forward_energy_only(batch_list_noise)
+            loss = -F.mse_loss(
+                out["forces"], t_out["forces"]
+            )  # minimize negative loss <=> maximize loss
             print(loss.item())
             loss.backward()
             opt.step()
         return [
-            self.transform(batch.clone(), delta)
+            self.transform(batch.clone(), delta).detach()
             for batch, delta in zip(batch_list, delta_list)
         ]
 
