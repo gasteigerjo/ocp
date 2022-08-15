@@ -83,8 +83,8 @@ class DistillForcesTrainer(BaseTrainer):
         cpu=False,
         slurm={},
         noddp=False,
-        config=None, 
-        **kwargs,  
+        config=None,
+        **kwargs,
     ):
         super().__init__(
             task=task,
@@ -107,13 +107,13 @@ class DistillForcesTrainer(BaseTrainer):
             slurm=slurm,
             noddp=noddp,
         )
-        # TODO: the way using config is quite strange. Clean the code. 
-        teacher_config = config['teacher_model']
-        teacher_model = teacher_config.pop('name')
+        # TODO: the way using config is quite strange. Clean the code.
+        teacher_config = config["teacher_model"]
+        teacher_model = teacher_config.pop("name")
         teacher_model_attributes = teacher_config
-        self.config['teacher_model_attributes'] = teacher_model_attributes
-        self.config['distill_loss'] = config['distill_loss']
-        self.config['distill_lambda'] = config['distill_lambda']
+        self.config["teacher_model_attributes"] = teacher_model_attributes
+        self.config["distill_loss"] = config["distill_loss"]
+        self.config["distill_lambda"] = config["distill_lambda"]
         self.teacher = registry.get_model_class(teacher_model)(
             self.loader.dataset[0].x.shape[-1]
             if self.loader
@@ -124,7 +124,7 @@ class DistillForcesTrainer(BaseTrainer):
             self.num_targets,
             **teacher_model_attributes,
         ).to(self.device)
-        self.load_teacher(config['teacher_path'])
+        self.load_teacher(config["teacher_path"])
         self.teacher.eval()
 
     def load_task(self):
@@ -167,7 +167,6 @@ class DistillForcesTrainer(BaseTrainer):
                     )
                     self.normalizers["grad_target"].mean.fill_(0)
 
-
     def load_teacher(self, checkpoint_path):
         logging.info(f"Loading checkpoint from: {checkpoint_path}")
         map_location = torch.device("cpu") if self.cpu else self.device
@@ -181,7 +180,7 @@ class DistillForcesTrainer(BaseTrainer):
         ) and first_key.split(".")[1] == "module":
             # No need for OrderedDict since dictionaries are technically ordered
             # since Python 3.6 and officially ordered since Python 3.7
-            
+
             # strange. why module.module?? TODO
             new_dict = {k[14:]: v for k, v in checkpoint["state_dict"].items()}
             self.teacher.load_state_dict(new_dict)
@@ -327,17 +326,24 @@ class DistillForcesTrainer(BaseTrainer):
                     results_file="predictions",
                     disable_tqdm=disable_eval_tqdm,
                 )
-                
-    def _node2node_distill_loss(self, batch):
-        return torch.nn.functional.mse_loss(batch['out']['n2n_feature'], batch['t_out']['node_feature']) 
-        
-    def _edge2node_distill_loss(self, batch):
-        return torch.nn.functional.mse_loss(batch['out']['e2n_feature'], batch['t_out']['e2n_feature'])       
 
-    def _vec2vec_distill_loss(self, batch):
-        return torch.nn.functional.mse_loss(batch['out']['vector_feature'], batch['t_out']['vector_feature']) 
+    def _node2node_distill_loss(self, out_batch, batch):
+        return torch.nn.functional.mse_loss(
+            out_batch["out"]["n2n_feature"], out_batch["t_out"]["node_feature"]
+        )
 
-    def train(self, disable_eval_tqdm=False):
+    def _edge2node_distill_loss(self, out_batch, batch):
+        return torch.nn.functional.mse_loss(
+            out_batch["out"]["e2n_feature"], out_batch["t_out"]["e2n_feature"]
+        )
+
+    def _vec2vec_distill_loss(self, out_batch, batch):
+        return torch.nn.functional.mse_loss(
+            out_batch["out"]["vector_feature"],
+            out_batch["t_out"]["vector_feature"],
+        )
+
+    def train(self, disable_eval_tqdm=False):  # noqa: C901
         eval_every = self.config["optim"].get(
             "eval_every", len(self.train_loader)
         )
@@ -360,11 +366,11 @@ class DistillForcesTrainer(BaseTrainer):
         # to prevent inconsistencies due to different batch size in checkpoint.
         start_epoch = self.step // len(self.train_loader)
 
-        distill_fns = self.config['distill_loss'].split(',')
-        if isinstance(self.config['distill_lambda'], float):
-            distill_lambda = [self.config['distill_lambda']] * len(distill_fns) 
+        distill_fns = self.config["distill_loss"].split(",")
+        if isinstance(self.config["distill_lambda"], float):
+            distill_lambda = [self.config["distill_lambda"]] * len(distill_fns)
         else:
-            distill_lambda = self.config['distill_lambda']
+            distill_lambda = self.config["distill_lambda"]
 
         for epoch_int in range(
             start_epoch, self.config["optim"]["max_epochs"]
@@ -384,19 +390,22 @@ class DistillForcesTrainer(BaseTrainer):
                 # Forward, loss, backward.
                 with torch.cuda.amp.autocast(enabled=self.scaler is not None):
                     out_batch = self._distill_forward(batch)
-                    loss = self._compute_loss(out_batch['out'], batch)
-                    distill_loss = 0.
-                    
+                    loss = self._compute_loss(out_batch["out"], batch)
+                    distill_loss = 0.0
+
                     for loss_idx, loss_type in enumerate(distill_fns):
-                        distill_loss += getattr(self, '_' + loss_type)(out_batch) * distill_lambda[loss_idx]
-                    loss += distill_loss            
+                        distill_loss += (
+                            getattr(self, "_" + loss_type)(out_batch, batch)
+                            * distill_lambda[loss_idx]
+                        )
+                    loss += distill_loss
                 loss = self.scaler.scale(loss) if self.scaler else loss
                 self._backward(loss)
                 scale = self.scaler.get_scale() if self.scaler else 1.0
 
                 # Compute metrics.
                 self.metrics = self._compute_metrics(
-                    out_batch['out'],
+                    out_batch["out"],
                     batch,
                     self.evaluator,
                     self.metrics,
@@ -508,23 +517,35 @@ class DistillForcesTrainer(BaseTrainer):
 
         return out
 
-
     def _distill_forward(self, batch_list):
         # forward pass.
         if self.config["model_attributes"].get("regress_forces", True):
-            [sfnode, sfe2n, sfvec], [out_energy, out_forces] = self.model.extract_features(batch_list)
-            with torch.no_grad():# TODO: this only suppot using 1 GPU for now. 
-                [tfnode, tfe2n, tfvec], [t_out_energy, t_out_forces] = self.teacher.extract_features(batch_list[0].cuda())
+            [sfnode, sfe2n, sfvec], [
+                out_energy,
+                out_forces,
+            ] = self.model.extract_features(batch_list)
+            with torch.no_grad():  # TODO: this only suppot using 1 GPU for now.
+                [tfnode, tfe2n, tfvec], [
+                    t_out_energy,
+                    t_out_forces,
+                ] = self.teacher.extract_features(batch_list[0].cuda())
         else:
-            [sfnode, sfe2n, sfvec], out_energy  = self.model.extract_features(batch_list)
+            [sfnode, sfe2n, sfvec], out_energy = self.model.extract_features(
+                batch_list
+            )
             with torch.no_grad():
-                [tfnode, tfe2n,], t_out_energy = self.teacher.extract_features(batch_list[0].cuda()) 
+                [
+                    tfnode,
+                    tfe2n,
+                ], t_out_energy = self.teacher.extract_features(
+                    batch_list[0].cuda()
+                )
 
         if out_energy.shape[-1] == 1:
             out_energy = out_energy.view(-1)
         if t_out_energy.shape[-1] == 1:
             t_out_energy = t_out_energy.view(-1)
-            
+
         out = {
             "n2n_feature": sfnode,
             "e2n_feature": sfe2n,
@@ -544,10 +565,9 @@ class DistillForcesTrainer(BaseTrainer):
 
         if self.config["teacher_model_attributes"].get("regress_forces", True):
             t_out["forces"] = t_out_forces
-            
-        return {'out': out, 't_out': t_out}
-    
-               
+
+        return {"out": out, "t_out": t_out}
+
     def _compute_loss(self, out, batch_list):
         loss = []
 
