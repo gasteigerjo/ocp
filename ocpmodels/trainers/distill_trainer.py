@@ -25,16 +25,6 @@ from ocpmodels.modules.normalizer import Normalizer
 from ocpmodels.trainers.base_trainer import BaseTrainer
 
 
-def node2node_distill_loss(out, t_out):
-    return torch.nn.functional.mse_loss(out['n2n_feature'], t_out['node_feature']) 
-    
-def edge2node_distill_loss(out, t_out):
-    return torch.nn.functional.mse_loss(out['e2n_feature'], t_out['e2n_feature'])       
-
-def vec2vec_distill_loss(out, t_out):
-    return torch.nn.functional.mse_loss(out['vector_feature'], t_out['vector_feature']) 
-
-
 @registry.register_trainer("distill")
 class DistillForcesTrainer(BaseTrainer):
     """
@@ -337,6 +327,15 @@ class DistillForcesTrainer(BaseTrainer):
                     results_file="predictions",
                     disable_tqdm=disable_eval_tqdm,
                 )
+                
+    def _node2node_distill_loss(self, batch):
+        return torch.nn.functional.mse_loss(batch['out']['n2n_feature'], batch['t_out']['node_feature']) 
+        
+    def _edge2node_distill_loss(self, batch):
+        return torch.nn.functional.mse_loss(batch['out']['e2n_feature'], batch['t_out']['e2n_feature'])       
+
+    def _vec2vec_distill_loss(self, batch):
+        return torch.nn.functional.mse_loss(batch['out']['vector_feature'], batch['t_out']['vector_feature']) 
 
     def train(self, disable_eval_tqdm=False):
         eval_every = self.config["optim"].get(
@@ -384,12 +383,12 @@ class DistillForcesTrainer(BaseTrainer):
 
                 # Forward, loss, backward.
                 with torch.cuda.amp.autocast(enabled=self.scaler is not None):
-                    out, t_out = self._distill_forward(batch)
-                    loss = self._compute_loss(out, batch)
+                    out_batch = self._distill_forward(batch)
+                    loss = self._compute_loss(out_batch['out'], batch)
                     distill_loss = 0.
                     
                     for loss_idx, loss_type in enumerate(distill_fns):
-                        distill_loss += eval(loss_type)(out, t_out) * distill_lambda[loss_idx]
+                        distill_loss += getattr(self, '_' + loss_type)(out_batch) * distill_lambda[loss_idx]
                     loss += distill_loss            
                 loss = self.scaler.scale(loss) if self.scaler else loss
                 self._backward(loss)
@@ -397,7 +396,7 @@ class DistillForcesTrainer(BaseTrainer):
 
                 # Compute metrics.
                 self.metrics = self._compute_metrics(
-                    out,
+                    out_batch['out'],
                     batch,
                     self.evaluator,
                     self.metrics,
@@ -546,10 +545,8 @@ class DistillForcesTrainer(BaseTrainer):
         if self.config["teacher_model_attributes"].get("regress_forces", True):
             t_out["forces"] = t_out_forces
             
-        return out, t_out
+        return {'out': out, 't_out': t_out}
     
- 
-         
                
     def _compute_loss(self, out, batch_list):
         loss = []
