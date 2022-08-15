@@ -353,6 +353,49 @@ class DistillForcesTrainer(BaseTrainer):
                     disable_tqdm=disable_eval_tqdm,
                 )
 
+    def _node2node_distill_loss(self, out_batch, batch):
+        return torch.nn.functional.mse_loss(
+            out_batch["out"]["n2n_feature"], out_batch["t_out"]["node_feature"]
+        )
+
+    def _edge2node_distill_loss(self, out_batch, batch):
+        return torch.nn.functional.mse_loss(
+            out_batch["out"]["e2n_feature"], out_batch["t_out"]["e2n_feature"]
+        )
+
+    def _vec2vec_distill_loss(self, out_batch, batch):
+        return torch.nn.functional.mse_loss(
+            out_batch["out"]["vector_feature"],
+            out_batch["t_out"]["vector_feature"],
+        )
+
+    def _adversarial_attack(self, batch_list):
+        with torch.no_grad():
+            delta_list = [
+                torch.empty(
+                    batch.pos.shape, requires_grad=True, device=self.device
+                ).normal_(0, 0.05)
+                for batch in batch_list
+            ]
+        opt = optim.SGD(delta_list, lr=0.1)
+        for _ in range(self.n_adversarial_steps):
+            batch_list_noise = [
+                self.transform(batch.clone(), delta)
+                for batch, delta in zip(batch_list, delta_list)
+            ]
+            opt.zero_grad()
+            out, t_out = self._distill_forward_energy_only(batch_list_noise)
+            loss = -F.mse_loss(
+                out["forces"], t_out["forces"]
+            )  # minimize negative loss <=> maximize loss
+            print(loss.item())
+            loss.backward()
+            opt.step()
+        return [
+            self.transform(batch.clone(), delta).detach()
+            for batch, delta in zip(batch_list, delta_list)
+        ]
+
     def train(self, disable_eval_tqdm=False):  # noqa: C901
         eval_every = self.config["optim"].get(
             "eval_every", len(self.train_loader)
@@ -376,6 +419,12 @@ class DistillForcesTrainer(BaseTrainer):
         # to prevent inconsistencies due to different batch size in checkpoint.
         start_epoch = self.step // len(self.train_loader)
 
+        distill_fns = self.config["distill_loss"].split(",")
+        if isinstance(self.config["distill_lambda"], float):
+            distill_lambda = [self.config["distill_lambda"]] * len(distill_fns)
+        else:
+            distill_lambda = self.config["distill_lambda"]
+
         for epoch_int in range(
             start_epoch, self.config["optim"]["max_epochs"]
         ):
@@ -393,47 +442,24 @@ class DistillForcesTrainer(BaseTrainer):
 
                 # Forward, loss, backward.
                 with torch.cuda.amp.autocast(enabled=self.scaler is not None):
-                    out = self._forward(batch)
-                    loss = self._compute_loss(out, batch)
+                    out_batch = self._distill_forward(batch)
+                    loss = self._compute_loss(out_batch["out"], batch)
                     distill_loss = 0.0
-                    # TODO: add lambda
-                    if "node2node" in self.config["distill_loss"]:
-                        out, t_out = self._distill_forward(batch)
-                        distill_loss += self._node2node_distill_loss(
-                            out, t_out
-                        )
-                    if "edge2node" in self.config["distill_loss"]:
-                        out, t_out = self._distill_forward(batch)
-                        distill_loss += self._edge2node_distill_loss(
-                            out, t_out
-                        )
-                    if "randomjitter" in self.config["distill_loss"]:
-                        batch_augmented = [
-                            self.transform(b.clone()) for b in batch
-                        ]
-                        out_aug, t_out_aug = self._distill_forward_energy_only(
-                            batch_augmented
-                        )
-                        distill_loss += self._compute_loss(
-                            out_aug, batch_augmented, teacher_output=t_out_aug
-                        )
-                    if "adversarial_jitter" in self.config["distill_loss"]:
-                        batch_augmented = self._adversarial_attack(batch)
-                        out_aug, t_out_aug = self._distill_forward_energy_only(
-                            batch_augmented
-                        )
-                        distill_loss += self._compute_loss(
-                            out_aug, batch_augmented, teacher_output=t_out_aug
-                        )
 
-                    loss += distill_loss * self.config["distill_lambda"]
+                    for loss_idx, loss_type in enumerate(distill_fns):
+                        distill_loss += (
+                            getattr(self, "_" + loss_type)(out_batch, batch)
+                            * distill_lambda[loss_idx]
+                        )
+                    loss += distill_loss
+
                 loss = self.scaler.scale(loss) if self.scaler else loss
                 self._backward(loss)
                 scale = self.scaler.get_scale() if self.scaler else 1.0
 
                 # Compute metrics.
                 self.metrics = self._compute_metrics(
-                    out,
+                    out_batch["out"],
                     batch,
                     self.evaluator,
                     self.metrics,
@@ -549,70 +575,49 @@ class DistillForcesTrainer(BaseTrainer):
         # forward pass.
         if self.config["model_attributes"].get("regress_forces", True):
             out_energy, out_forces = self.model(batch_list)
-            t_out_energy, t_out_forces = self.teacher(batch_list)
+            with torch.no_grad():
+                t_out_energy, t_out_forces = self.teacher(batch_list)
         else:
             out_energy = self.model(batch_list)
-            t_out_energy = self.teacher(batch_list)
+            with torch.no_grad():
+                t_out_energy = self.teacher(batch_list)
 
         if out_energy.shape[-1] == 1:
             out_energy = out_energy.view(-1)
         if t_out_energy.shape[-1] == 1:
             t_out_energy = t_out_energy.view(-1)
 
-        out = {
-            "energy": out_energy,
-        }
+        out = {"energy": out_energy}
         t_out = {"energy": t_out_energy}
 
         if self.config["model_attributes"].get("regress_forces", True):
             out["forces"] = out_forces
+
+        if self.config["teacher_model_attributes"].get("regress_forces", True):
             t_out["forces"] = t_out_forces
-
         return out, t_out
-
-    def _adversarial_attack(self, batch_list):
-        with torch.no_grad():
-            delta_list = [
-                torch.empty(
-                    batch.pos.shape, requires_grad=True, device=self.device
-                ).normal_(0, 0.05)
-                for batch in batch_list
-            ]
-        opt = optim.SGD(delta_list, lr=0.1)
-        for _ in range(self.n_adversarial_steps):
-            batch_list_noise = [
-                self.transform(batch.clone(), delta)
-                for batch, delta in zip(batch_list, delta_list)
-            ]
-            opt.zero_grad()
-            out, t_out = self._distill_forward_energy_only(batch_list_noise)
-            loss = -F.mse_loss(
-                out["forces"], t_out["forces"]
-            )  # minimize negative loss <=> maximize loss
-            print(loss.item())
-            loss.backward()
-            opt.step()
-        return [
-            self.transform(batch.clone(), delta).detach()
-            for batch, delta in zip(batch_list, delta_list)
-        ]
 
     def _distill_forward(self, batch_list):
         # forward pass.
         if self.config["model_attributes"].get("regress_forces", True):
-            [sfnode, sfedge], [
+            [sfnode, sfe2n, sfvec], [
                 out_energy,
                 out_forces,
             ] = self.model.extract_features(batch_list)
             with torch.no_grad():  # TODO: this only suppot using 1 GPU for now.
-                [tfnode, tfedge], [
+                [tfnode, tfe2n, tfvec], [
                     t_out_energy,
                     t_out_forces,
                 ] = self.teacher.extract_features(batch_list[0].cuda())
         else:
-
+            [sfnode, sfe2n, sfvec], out_energy = self.model.extract_features(
+                batch_list
+            )
             with torch.no_grad():
-                [tfnode, tfedge], t_out_energy = self.teacher.extract_features(
+                [
+                    tfnode,
+                    tfe2n,
+                ], t_out_energy = self.teacher.extract_features(
                     batch_list[0].cuda()
                 )
 
@@ -622,8 +627,9 @@ class DistillForcesTrainer(BaseTrainer):
             t_out_energy = t_out_energy.view(-1)
 
         out = {
-            "node_feature": sfnode,
-            "edge_feature": sfedge,
+            "n2n_feature": sfnode,
+            "e2n_feature": sfe2n,
+            "vector_feature": sfvec,
             "energy": out_energy,
         }
 
@@ -632,24 +638,14 @@ class DistillForcesTrainer(BaseTrainer):
 
         t_out = {
             "node_feature": tfnode,
-            "edge_feature": tfedge,
+            "e2n_feature": tfe2n,
+            "vector_feature": tfvec,
             "energy": t_out_energy,
         }
 
         if self.config["teacher_model_attributes"].get("regress_forces", True):
             t_out["forces"] = t_out_forces
-
-        return out, t_out
-
-    def _node2node_distill_loss(self, out, t_out):
-        return torch.nn.functional.mse_loss(
-            out["node_feature"], t_out["node_feature"]
-        )
-
-    def _edge2node_distill_loss(self, out, t_out):
-        return torch.nn.functional.mse_loss(
-            out["node_feature"], t_out["edge_feature"]
-        )
+        return {"out": out, "t_out": t_out}
 
     def _compute_loss(self, out, batch_list, teacher_output=None):
         loss = []

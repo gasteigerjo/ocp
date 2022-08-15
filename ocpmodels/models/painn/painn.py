@@ -80,7 +80,8 @@ class PaiNN(ScaledModule):
         direct_forces=True,
         use_pbc=True,
         otf_graph=True,
-        teacher_dim=512,
+        teacher_node_dim=512,
+        teacher_edge_dim=512,
         use_distill=False, 
         **kwargs 
     ):
@@ -99,10 +100,22 @@ class PaiNN(ScaledModule):
 
         # TODO: for distillation
         if use_distill:
-            if hidden_channels != teacher_dim:
-                self.s2t_mapping = nn.Linear(hidden_channels, teacher_dim)
+            if hidden_channels != teacher_node_dim:
+                self.n2n_mapping = nn.Linear(hidden_channels, teacher_node_dim)
             else:
-                self.s2t_mapping = nn.Identity() 
+                self.n2n_mapping = nn.Identity()
+                
+            if hidden_channels != teacher_edge_dim:
+                self.v2v_mapping = nn.Linear(hidden_channels, teacher_edge_dim)
+            else:
+                self.v2v_mapping = nn.Identity()
+                
+            if hidden_channels != teacher_edge_dim:
+                self.e2n_mapping = nn.Linear(hidden_channels, teacher_edge_dim)
+            else:
+                self.e2n_mapping = nn.Identity()
+                         
+         
         # Borrowed from GemNet.
         self.symmetric_edge_symmetrization = False
 
@@ -526,10 +539,10 @@ class PaiNN(ScaledModule):
                     )[0]
                 )
             # return [x_list, vec_list], [energy, forces]
-            return [self.s2t_mapping(x), None], [energy, forces]
+            return [self.n2n_mapping(x), self.e2n_mapping(x), self.v2v_mapping(vec)], [energy, forces]
         else:
             # return [x_list, vec_list], energy
-            return [self.s2t_mapping(x), None], energy
+            return [self.n2n_mapping(x), self.e2n_mapping(x), self.v2v_mapping(vec)], energy
         
     @property
     def num_params(self):
