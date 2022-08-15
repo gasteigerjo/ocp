@@ -369,7 +369,7 @@ class DistillForcesTrainer(BaseTrainer):
             out_batch["t_out"]["vector_feature"],
         )
 
-    def _adversarial_attack(self, batch_list):
+    def _adversarial_batch(self, batch_list):
         with torch.no_grad():
             delta_list = [
                 torch.empty(
@@ -384,9 +384,11 @@ class DistillForcesTrainer(BaseTrainer):
                 for batch, delta in zip(batch_list, delta_list)
             ]
             opt.zero_grad()
-            out, t_out = self._distill_forward_energy_only(batch_list_noise)
+            out_batch = self._distill_forward_energy_forces_only(
+                batch_list_noise
+            )
             loss = -F.mse_loss(
-                out["forces"], t_out["forces"]
+                out_batch["out"]["forces"], out_batch["t_out"]["forces"]
             )  # minimize negative loss <=> maximize loss
             print(loss.item())
             loss.backward()
@@ -395,6 +397,13 @@ class DistillForcesTrainer(BaseTrainer):
             self.transform(batch.clone(), delta).detach()
             for batch, delta in zip(batch_list, delta_list)
         ]
+
+    def _adversarial_jitter_distill_loss(self, out_batch, batch):
+        augmented_batch = self._adversarial_batch(batch)
+        out_batch = self._distill_forward_energy_forces_only(augmented_batch)
+        return self._compute_loss(
+            out_batch["out"], augmented_batch, out_batch["t_out"]
+        )
 
     def train(self, disable_eval_tqdm=False):  # noqa: C901
         eval_every = self.config["optim"].get(
@@ -571,7 +580,7 @@ class DistillForcesTrainer(BaseTrainer):
 
         return out
 
-    def _distill_forward_energy_only(self, batch_list):
+    def _distill_forward_energy_forces_only(self, batch_list):
         # forward pass.
         if self.config["model_attributes"].get("regress_forces", True):
             out_energy, out_forces = self.model(batch_list)
@@ -595,7 +604,7 @@ class DistillForcesTrainer(BaseTrainer):
 
         if self.config["teacher_model_attributes"].get("regress_forces", True):
             t_out["forces"] = t_out_forces
-        return out, t_out
+        return {"out": out, "t_out": t_out}
 
     def _distill_forward(self, batch_list):
         # forward pass.
