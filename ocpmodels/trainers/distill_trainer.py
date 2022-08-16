@@ -151,7 +151,7 @@ class DistillForcesTrainer(BaseTrainer):
         elif "adversarial_jitter" in config["distill_loss"]:
             self.transform = AddNoise()
             self.adversarial_lr = 0.01
-            self.n_adversarial_steps = 10
+            self.n_adversarial_steps = 100
 
     def load_task(self):
         logging.info(f"Loading dataset: {self.config['task']['dataset']}")
@@ -374,17 +374,17 @@ class DistillForcesTrainer(BaseTrainer):
             delta_list = [
                 torch.empty(
                     batch.pos.shape, requires_grad=True, device=self.device
-                ).normal_(0, 0.05)
+                ).normal_(0, 0.1)
                 for batch in batch_list
             ]
-        opt = optim.SGD(delta_list, lr=0.1)
+        opt = optim.Adam(delta_list, lr=0.05)
         min_loss = 0
         for _ in range(self.n_adversarial_steps):
+            opt.zero_grad()
             batch_list_noise = [
                 self.transform(batch.clone(), delta)
                 for batch, delta in zip(batch_list, delta_list)
             ]
-            opt.zero_grad()
             out_batch = self._distill_forward_energy_forces_only(
                 batch_list_noise
             )
@@ -392,7 +392,7 @@ class DistillForcesTrainer(BaseTrainer):
                 out_batch["out"]["forces"], out_batch["t_out"]["forces"]
             )  # minimize negative loss <=> maximize loss
             print(loss.item())
-            if loss.item < min_loss:
+            if loss.item() < min_loss:
                 with torch.no_grad():
                     return_batch = [
                         self.transform(batch.clone(), delta)
@@ -622,7 +622,7 @@ class DistillForcesTrainer(BaseTrainer):
                 [tfnode, tfe2n, tfvec], [
                     t_out_energy,
                     t_out_forces,
-                ] = self.teacher.extract_features(batch_list[0].cuda())
+                ] = self.teacher.extract_features(batch_list)
         else:
             [sfnode, sfe2n, sfvec], out_energy = self.model.extract_features(
                 batch_list
