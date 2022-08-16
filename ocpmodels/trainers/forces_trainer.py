@@ -313,7 +313,7 @@ class ForcesTrainer(BaseTrainer):
             train_loader_iter = iter(self.train_loader)
             with torch.profiler.profile(
                 schedule=torch.profiler.schedule(
-                    wait=1, warmup=1, active=3, repeat=2
+                    wait=1, warmup=1, active=8, repeat=1
                 ),
                 on_trace_ready=torch.profiler.tensorboard_trace_handler(
                     "./prof_log"
@@ -324,6 +324,7 @@ class ForcesTrainer(BaseTrainer):
             ) as prof:
 
                 for i in range(skip_steps, len(self.train_loader)):
+                    print(i)
                     self.epoch = epoch_int + (i + 1) / len(self.train_loader)
                     self.step = epoch_int * len(self.train_loader) + i + 1
                     self.model.train()
