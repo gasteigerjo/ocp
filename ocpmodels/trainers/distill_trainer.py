@@ -378,6 +378,7 @@ class DistillForcesTrainer(BaseTrainer):
                 for batch in batch_list
             ]
         opt = optim.SGD(delta_list, lr=0.1)
+        min_loss = 0
         for _ in range(self.n_adversarial_steps):
             batch_list_noise = [
                 self.transform(batch.clone(), delta)
@@ -391,12 +392,16 @@ class DistillForcesTrainer(BaseTrainer):
                 out_batch["out"]["forces"], out_batch["t_out"]["forces"]
             )  # minimize negative loss <=> maximize loss
             print(loss.item())
+            if loss.item < min_loss:
+                with torch.no_grad():
+                    return_batch = [
+                        self.transform(batch.clone(), delta)
+                        for batch, delta in zip(batch_list, delta_list)
+                    ]
+                    min_loss = loss.item()
             loss.backward()
             opt.step()
-        return [
-            self.transform(batch.clone(), delta).detach()
-            for batch, delta in zip(batch_list, delta_list)
-        ]
+        return [batch.detach() for batch in return_batch]
 
     def _adversarial_jitter_distill_loss(self, out_batch, batch):
         augmented_batch = self._adversarial_batch(batch)
