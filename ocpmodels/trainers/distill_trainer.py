@@ -410,6 +410,16 @@ class DistillForcesTrainer(BaseTrainer):
             out_batch["out"], augmented_batch, out_batch["t_out"]
         )
 
+    def _random_jitter_batch(self, batch_list):
+        return [self.transform(batch).detach() for batch in batch_list]
+
+    def _random_jitter_distill_loss(self, out_batch, batch):
+        augmented_batch = self._random_jitter_batch(batch)
+        out_batch = self._distill_forward_energy_forces_only(augmented_batch)
+        return self._compute_loss(
+            out_batch["out"], augmented_batch, out_batch["t_out"]
+        )
+
     def train(self, disable_eval_tqdm=False):  # noqa: C901
         eval_every = self.config["optim"].get(
             "eval_every", len(self.train_loader)
