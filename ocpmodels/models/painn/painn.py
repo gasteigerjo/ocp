@@ -53,7 +53,6 @@ from .scaling import ScaledModule, ScalingFactor
 from .utils import get_edge_id, repeat_blocks
 
 
-
 # TODO: the best way for using distillation is to implement a DistillModel class, and initize student and teacher model there.
 # TODO: here, I am doing a dirty code, where I just pass distill_args to student model (painn)
 @registry.register_model("painn")
@@ -82,8 +81,8 @@ class PaiNN(ScaledModule):
         otf_graph=True,
         teacher_node_dim=512,
         teacher_edge_dim=512,
-        use_distill=False, 
-        **kwargs 
+        use_distill=False,
+        **kwargs,
     ):
         super(PaiNN, self).__init__()
 
@@ -104,18 +103,17 @@ class PaiNN(ScaledModule):
                 self.n2n_mapping = nn.Linear(hidden_channels, teacher_node_dim)
             else:
                 self.n2n_mapping = nn.Identity()
-                
+
             if hidden_channels != teacher_edge_dim:
                 self.v2v_mapping = nn.Linear(hidden_channels, teacher_edge_dim)
             else:
                 self.v2v_mapping = nn.Identity()
-                
+
             if hidden_channels != teacher_edge_dim:
                 self.e2n_mapping = nn.Linear(hidden_channels, teacher_edge_dim)
             else:
                 self.e2n_mapping = nn.Identity()
-                         
-         
+
         # Borrowed from GemNet.
         self.symmetric_edge_symmetrization = False
 
@@ -439,24 +437,28 @@ class PaiNN(ScaledModule):
 
         #### Interaction blocks ###############################################
 
-        for i in range(self.num_layers):
-            dx, dvec = self.message_layers[i](
-                x, vec, edge_index, edge_rbf, edge_vector
-            )
+        with torch.profiler.record_function("painn_interaction_blocks"):
+            for i in range(self.num_layers):
+                with torch.profiler.record_function(
+                    f"painn_message_layer_{i}"
+                ):
+                    dx, dvec = self.message_layers[i](
+                        x, vec, edge_index, edge_rbf, edge_vector
+                    )
 
-            x = x + dx
-            vec = vec + dvec
-            x = x * self.inv_sqrt_2
+                x = x + dx
+                vec = vec + dvec
+                x = x * self.inv_sqrt_2
+                with torch.profiler.record_function(f"painn_update_layer_{i}"):
+                    dx, dvec = self.update_layers[i](x, vec)
 
-            dx, dvec = self.update_layers[i](x, vec)
-
-            x = x + dx
-            vec = vec + dvec
-            x = getattr(self, "upd_out_scalar_scale_%d" % i)(x)
+                x = x + dx
+                vec = vec + dvec
+                x = getattr(self, "upd_out_scalar_scale_%d" % i)(x)
 
         #### Output block #####################################################
-
-        per_atom_energy = self.out_energy(x).squeeze(1)
+        with torch.profiler.record_function("painn_output_block"):
+            per_atom_energy = self.out_energy(x).squeeze(1)
         energy = scatter(per_atom_energy, batch, dim=0)
 
         if self.regress_forces:
@@ -476,7 +478,6 @@ class PaiNN(ScaledModule):
                 return energy, forces
         else:
             return energy
-
 
     def extract_features(self, data):
         pos = data.pos
@@ -501,7 +502,7 @@ class PaiNN(ScaledModule):
         x = self.atom_emb(z)
         vec = torch.zeros(x.size(0), 3, x.size(1), device=x.device)
 
-        # TODO: output student vector feature for distill. vec 
+        # TODO: output student vector feature for distill. vec
         #### Interaction blocks ###############################################
         # x_list, vec_list = [], []
         for i in range(self.num_layers):
@@ -539,11 +540,19 @@ class PaiNN(ScaledModule):
                     )[0]
                 )
             # return [x_list, vec_list], [energy, forces]
-            return [self.n2n_mapping(x), self.e2n_mapping(x), self.v2v_mapping(vec)], [energy, forces]
+            return [
+                self.n2n_mapping(x),
+                self.e2n_mapping(x),
+                self.v2v_mapping(vec),
+            ], [energy, forces]
         else:
             # return [x_list, vec_list], energy
-            return [self.n2n_mapping(x), self.e2n_mapping(x), self.v2v_mapping(vec)], energy
-        
+            return [
+                self.n2n_mapping(x),
+                self.e2n_mapping(x),
+                self.v2v_mapping(vec),
+            ], energy
+
     @property
     def num_params(self):
         return sum(p.numel() for p in self.parameters())
