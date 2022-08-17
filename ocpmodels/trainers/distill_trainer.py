@@ -391,7 +391,6 @@ class DistillForcesTrainer(BaseTrainer):
             loss = -F.mse_loss(
                 out_batch["out"]["forces"], out_batch["t_out"]["forces"]
             )  # minimize negative loss <=> maximize loss
-            print(loss.item())
             if loss.item() < min_loss:
                 with torch.no_grad():
                     return_batch = [
