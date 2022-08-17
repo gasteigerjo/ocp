@@ -439,9 +439,7 @@ class PaiNN(ScaledModule):
 
         with torch.profiler.record_function("painn_interaction_blocks"):
             for i in range(self.num_layers):
-                with torch.profiler.record_function(
-                    f"painn_message_layer_{i}"
-                ):
+                with torch.profiler.record_function("painn_message_layer"):
                     dx, dvec = self.message_layers[i](
                         x, vec, edge_index, edge_rbf, edge_vector
                     )
@@ -449,7 +447,7 @@ class PaiNN(ScaledModule):
                 x = x + dx
                 vec = vec + dvec
                 x = x * self.inv_sqrt_2
-                with torch.profiler.record_function(f"painn_update_layer_{i}"):
+                with torch.profiler.record_function("painn_update_layer"):
                     dx, dvec = self.update_layers[i](x, vec)
 
                 x = x + dx
