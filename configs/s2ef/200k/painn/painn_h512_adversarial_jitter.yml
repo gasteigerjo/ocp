@@ -1,8 +1,11 @@
 includes:
   - configs/s2ef/200k/base.yml
 trainer: distill
-distill_loss: adversarial_jitter_distill_loss
-distill_lambda: 1.0
+distillation:
+    distill_loss: adversarial_jitter_distill_loss
+    distill_lambda: 1.0
+    n_adversarial_steps: 100
+    adversarial_lr: 0.1
 
 model:
   name: painn

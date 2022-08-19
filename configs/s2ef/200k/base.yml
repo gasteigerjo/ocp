@@ -1,7 +1,3 @@
-trainer: forces
-distill_loss: node2node
-distill_lambda: 1.0
-
 dataset:
   - src: data/s2ef/200k/train/
     normalize_labels: True
