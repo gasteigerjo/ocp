@@ -382,9 +382,9 @@ class DistillForcesTrainer(BaseTrainer):
                 ).normal_(0, 0.1)
                 for batch in batch_list
             ]
-        opt = optim.Adam(delta_list, lr=0.05)
+        opt = optim.Adam(delta_list, lr=self.adversarial_lr)
         min_loss = 0
-        for _ in range(self.n_adversarial_steps):
+        for i in range(self.n_adversarial_steps):
             opt.zero_grad()
             batch_list_noise = [
                 self.transform(batch.clone(), delta)
@@ -477,6 +477,7 @@ class DistillForcesTrainer(BaseTrainer):
                     distill_loss = 0.0
 
                     for loss_idx, loss_type in enumerate(distill_fns):
+                        # TODO: the distill loss seems not used. 
                         distill_loss += (
                             getattr(self, "_" + loss_type)(out_batch, batch)
                             * distill_lambda[loss_idx]
@@ -821,7 +822,7 @@ class DistillForcesTrainer(BaseTrainer):
             natoms_free = []
             for natoms in target["natoms"]:
                 natoms_free.append(
-                    torch.sum(mask[s_idx : s_idx + natoms]).item()
+                    torch.sum(mask[s_idx: s_idx + natoms]).item()
                 )
                 s_idx += natoms
             target["natoms"] = torch.LongTensor(natoms_free).to(self.device)
@@ -901,7 +902,7 @@ class DistillForcesTrainer(BaseTrainer):
                 natoms_free = []
                 for natoms in relaxed_batch.natoms:
                     natoms_free.append(
-                        torch.sum(mask[s_idx : s_idx + natoms]).item()
+                        torch.sum(mask[s_idx: s_idx + natoms]).item()
                     )
                     s_idx += natoms
 
