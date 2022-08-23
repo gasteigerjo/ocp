@@ -121,8 +121,7 @@ class DistillForcesTrainer(BaseTrainer):
         teacher_model = teacher_config.pop("name")
         teacher_model_attributes = teacher_config
         self.config["teacher_model_attributes"] = teacher_model_attributes
-        self.config["distill_loss"] = config["distill_loss"]
-        self.config["distill_lambda"] = config["distill_lambda"]
+        self.config["distillation"] = config["distillation"]
         self.teacher = registry.get_model_class(teacher_model)(
             self.loader.dataset[0].x.shape[-1]
             if self.loader
@@ -144,14 +143,20 @@ class DistillForcesTrainer(BaseTrainer):
                 self.teacer, device_ids=[self.device]
             )
         self.teacher.eval()
-        if "randomjitter" in config["distill_loss"]:
+        if "randomjitter" in self.config["distillation"]["distill_loss"]:
             self.transform = RandomJitter(
                 {"max_translation": 0.1, "translation_probability": 1.0}
             )
-        elif "adversarial_jitter" in config["distill_loss"]:
+        elif (
+            "adversarial_jitter" in self.config["distillation"]["distill_loss"]
+        ):
             self.transform = AddNoise()
-            self.adversarial_lr = 0.01
-            self.n_adversarial_steps = 100
+            self.adversarial_lr = self.config["distillation"].get(
+                "adversarial_lr", 0.1
+            )
+            self.n_adversarial_steps = self.config["distillation"].get(
+                "n_adversarial_steps", 100
+            )
 
     def load_task(self):
         logging.info(f"Loading dataset: {self.config['task']['dataset']}")
@@ -442,11 +447,13 @@ class DistillForcesTrainer(BaseTrainer):
         # to prevent inconsistencies due to different batch size in checkpoint.
         start_epoch = self.step // len(self.train_loader)
 
-        distill_fns = self.config["distill_loss"].split(",")
-        if isinstance(self.config["distill_lambda"], float):
-            distill_lambda = [self.config["distill_lambda"]] * len(distill_fns)
+        distill_fns = self.config["distillation"]["distill_loss"].split(",")
+        if isinstance(self.config["distillation"]["distill_lambda"], float):
+            distill_lambda = [
+                self.config["distillation"]["distill_lambda"]
+            ] * len(distill_fns)
         else:
-            distill_lambda = self.config["distill_lambda"]
+            distill_lambda = self.config["distillation"]["distill_lambda"]
 
         for epoch_int in range(
             start_epoch, self.config["optim"]["max_epochs"]
