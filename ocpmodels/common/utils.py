@@ -34,7 +34,7 @@ from torch_scatter import segment_coo, segment_csr
 
 def pyg2_data_transform(data: Data):
     # if we're on the new pyg (2.0 or later), we need to convert the data to the new format
-    if torch_geometric.__version__ >= "2.0":
+    if torch_geometric.__version__ >= "2.0" and "_store" not in data.__dict__:
         return Data(
             **{k: v for k, v in data.__dict__.items() if v is not None}
         )
@@ -400,7 +400,9 @@ def build_config(args, args_override):
     config["checkpoint"] = args.checkpoint
     config["cpu"] = args.cpu
     if not config["identifier"]:
-       config["identifier"] = '-'.join(str(args.config_yml).split('/')[1:])[:-4]
+        config["identifier"] = "-".join(str(args.config_yml).split("/")[1:])[
+            :-4
+        ]
     # Submit
     config["submit"] = args.submit
     config["summit"] = args.summit
