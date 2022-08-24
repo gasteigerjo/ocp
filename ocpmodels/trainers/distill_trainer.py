@@ -157,6 +157,24 @@ class DistillForcesTrainer(BaseTrainer):
             self.n_adversarial_steps = self.config["distillation"].get(
                 "n_adversarial_steps", 100
             )
+        
+        self.distill_fns = self.config["distillation"]["distill_loss"].split(",") 
+        if isinstance(self.config["distillation"]["distill_lambda"], float):
+            self.distill_lambda = [
+                self.config["distillation"]["distill_lambda"]
+            ] * len(self.distill_fns)
+        else:
+            self.distill_lambda = self.config["distillation"]["distill_lambda"]
+
+        if 'adversarial' in self.config["distillation"]["distill_loss"]: 
+            self.adversarial_distill_fns = self.config["distillation"]["adversarial_distill_loss"].split(",") 
+            if isinstance(self.config["distillation"]["adversarial_distill_lambda"], float):
+                self.adversarial_distill_lambda = [
+                    self.config["distillation"]["adversarial_distill_lambda"]
+                ] * len(self.distill_fns)
+            else:
+                self.adversarial_distill_lambda = self.config["distillation"]["adversarial_distill_lambda"]
+
 
     def load_task(self):
         logging.info(f"Loading dataset: {self.config['task']['dataset']}")
@@ -409,17 +427,29 @@ class DistillForcesTrainer(BaseTrainer):
 
     def _adversarial_jitter_distill_loss(self, out_batch, batch):
         augmented_batch = self._adversarial_batch(batch)
-        out_batch = self._distill_forward_energy_forces_only(augmented_batch)
-        return self._compute_loss(
-            out_batch["out"], augmented_batch, out_batch["t_out"]
-        )
+        # out_batch = self._distill_forward_energy_forces_only(augmented_batch)
+        out_batch = self._distill_forward(augmented_batch)
+        #
+        distill_loss = 0.
+        for loss_idx, loss_type in enumerate(self.adversarial_distill_fns):
+            distill_loss += (
+                getattr(self, "_" + loss_type)(out_batch, augmented_batch)
+                * self.adversarial_distill_lambda[loss_idx]
+            )
+        return distill_loss
+    
+        # TODO: should also support this?
+        # return self._compute_loss(
+        #     out_batch["out"], augmented_batch, out_batch["t_out"]
+        # )
 
     def _random_jitter_batch(self, batch_list):
         return [self.transform(batch).detach() for batch in batch_list]
 
     def _random_jitter_distill_loss(self, out_batch, batch):
         augmented_batch = self._random_jitter_batch(batch)
-        out_batch = self._distill_forward_energy_forces_only(augmented_batch)
+        # out_batch = self._distill_forward_energy_forces_only(augmented_batch)
+        out_batch = self._distill_forward(augmented_batch)
         return self._compute_loss(
             out_batch["out"], augmented_batch, out_batch["t_out"]
         )
@@ -447,13 +477,6 @@ class DistillForcesTrainer(BaseTrainer):
         # to prevent inconsistencies due to different batch size in checkpoint.
         start_epoch = self.step // len(self.train_loader)
 
-        distill_fns = self.config["distillation"]["distill_loss"].split(",")
-        if isinstance(self.config["distillation"]["distill_lambda"], float):
-            distill_lambda = [
-                self.config["distillation"]["distill_lambda"]
-            ] * len(distill_fns)
-        else:
-            distill_lambda = self.config["distillation"]["distill_lambda"]
 
         for epoch_int in range(
             start_epoch, self.config["optim"]["max_epochs"]
@@ -474,15 +497,19 @@ class DistillForcesTrainer(BaseTrainer):
                 with torch.cuda.amp.autocast(enabled=self.scaler is not None):
                     out_batch = self._distill_forward(batch)
                     loss = self._compute_loss(out_batch["out"], batch)
-                    distill_loss = 0.0
-
-                    for loss_idx, loss_type in enumerate(distill_fns):
-                        # TODO: the distill loss seems not used. 
-                        distill_loss += (
+                    # distill_loss = 0.0
+                    distill_loss = [] 
+                    for loss_idx, loss_type in enumerate(self.distill_fns):
+                        # distill_loss += (
+                        #     getattr(self, "_" + loss_type)(out_batch, batch)
+                        #     * distill_lambda[loss_idx]
+                        # )
+                        distill_loss.append(
                             getattr(self, "_" + loss_type)(out_batch, batch)
-                            * distill_lambda[loss_idx]
+                            * self.distill_lambda[loss_idx]
                         )
-                    loss += distill_loss
+                    # loss += distill_loss
+                    loss += sum(distill_loss)
 
                 loss = self.scaler.scale(loss) if self.scaler else loss
                 self._backward(loss)
@@ -498,9 +525,13 @@ class DistillForcesTrainer(BaseTrainer):
                 self.metrics = self.evaluator.update(
                     "loss", loss.item() / scale, self.metrics
                 )
-                self.metrics = self.evaluator.update(
-                    "distill_loss", distill_loss.item(), self.metrics
-                )
+                # self.metrics = self.evaluator.update(
+                #     "distill_loss", distill_loss.item(), self.metrics
+                # )
+                for idx, loss_i in enumerate(distill_loss):
+                    self.metrics = self.evaluator.update(
+                        f"distill_loss_{idx}", loss_i.item(), self.metrics
+                    )
                 # Log metrics.
                 log_dict = {k: self.metrics[k]["metric"] for k in self.metrics}
                 log_dict.update(
