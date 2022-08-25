@@ -420,9 +420,7 @@ class DistillForcesTrainer(BaseTrainer):
                 self.transform(batch.clone(), delta)
                 for batch, delta in zip(batch_list, delta_list)
             ]
-            out_batch = self._distill_forward_energy_forces_only(
-                batch_list_noise
-            )
+            out_batch = self._distill_forward(batch_list_noise)
             loss = -F.mse_loss(
                 out_batch["out"]["forces"], out_batch["t_out"]["forces"]
             )  # minimize negative loss <=> maximize loss
@@ -438,7 +436,9 @@ class DistillForcesTrainer(BaseTrainer):
         return [batch.detach() for batch in return_batch]
 
     def _adversarial_jitter_distill_loss(self, out_batch, batch):
+        self.model.eval()
         augmented_batch = self._adversarial_batch(batch)
+        self.model.train()
         out_batch = self._distill_forward(augmented_batch)
 
         distill_loss = 0.0
@@ -451,9 +451,10 @@ class DistillForcesTrainer(BaseTrainer):
                     * self.adversarial_distill_lambda[loss_idx]
                 )
             else:
-                distill_loss += getattr(self, "_" + loss_type)(
-                    out_batch, augmented_batch
-                ) * float(self.adversarial_distill_lambda[loss_idx])
+                distill_loss += (
+                    getattr(self, "_" + loss_type)(out_batch, augmented_batch)
+                    * self.adversarial_distill_lambda[loss_idx]
+                )
         return distill_loss
 
     def _random_jitter_batch(self, batch_list):
