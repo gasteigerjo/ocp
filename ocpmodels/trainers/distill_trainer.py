@@ -16,13 +16,13 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 import torch_geometric
-from torch.nn.parallel.distributed import DistributedDataParallel
 from tqdm import tqdm
 
 from ocpmodels.common import distutils
 from ocpmodels.common.data_parallel import (
     BalancedBatchSampler,
     OCPDataParallel,
+    OCPDistributedDataParallel,
     ParallelCollater,
 )
 from ocpmodels.common.registry import registry
@@ -132,16 +132,16 @@ class DistillForcesTrainer(BaseTrainer):
             self.num_targets,
             **teacher_model_attributes,
         ).to(self.device)
-        self.load_teacher(config["teacher_path"])
         self.teacher = OCPDataParallel(
             self.teacher,
             output_device=self.device,
             num_gpus=1 if not self.cpu else 0,
         )
         if distutils.initialized() and not self.config["noddp"]:
-            self.teacher = DistributedDataParallel(
-                self.teacer, device_ids=[self.device]
+            self.teacher = OCPDistributedDataParallel(
+                self.teacher, device_ids=[self.device]
             )
+        self.load_teacher(config["teacher_path"])
         self.teacher.eval()
         if "randomjitter" in self.config["distillation"]["distill_loss"]:
             self.transform = RandomJitter(
@@ -157,8 +157,10 @@ class DistillForcesTrainer(BaseTrainer):
             self.n_adversarial_steps = self.config["distillation"].get(
                 "n_adversarial_steps", 100
             )
-        
-        self.distill_fns = self.config["distillation"]["distill_loss"].split(",") 
+
+        self.distill_fns = self.config["distillation"]["distill_loss"].split(
+            ","
+        )
         if isinstance(self.config["distillation"]["distill_lambda"], float):
             self.distill_lambda = [
                 self.config["distillation"]["distill_lambda"]
@@ -166,15 +168,21 @@ class DistillForcesTrainer(BaseTrainer):
         else:
             self.distill_lambda = self.config["distillation"]["distill_lambda"]
 
-        if 'adversarial' in self.config["distillation"]["distill_loss"]: 
-            self.adversarial_distill_fns = self.config["distillation"]["adversarial_distill_loss"].split(",") 
-            if isinstance(self.config["distillation"]["adversarial_distill_lambda"], float):
+        if "adversarial" in self.config["distillation"]["distill_loss"]:
+            self.adversarial_distill_fns = self.config["distillation"][
+                "adversarial_distill_loss"
+            ].split(",")
+            if isinstance(
+                self.config["distillation"]["adversarial_distill_lambda"],
+                float,
+            ):
                 self.adversarial_distill_lambda = [
                     self.config["distillation"]["adversarial_distill_lambda"]
                 ] * len(self.distill_fns)
             else:
-                self.adversarial_distill_lambda = self.config["distillation"]["adversarial_distill_lambda"]
-
+                self.adversarial_distill_lambda = self.config["distillation"][
+                    "adversarial_distill_lambda"
+                ]
 
     def load_task(self):
         logging.info(f"Loading dataset: {self.config['task']['dataset']}")
@@ -229,9 +237,7 @@ class DistillForcesTrainer(BaseTrainer):
         ) and first_key.split(".")[1] == "module":
             # No need for OrderedDict since dictionaries are technically ordered
             # since Python 3.6 and officially ordered since Python 3.7
-
-            # strange. why module.module?? TODO
-            new_dict = {k[14:]: v for k, v in checkpoint["state_dict"].items()}
+            new_dict = {k[7:]: v for k, v in checkpoint["state_dict"].items()}
             self.teacher.load_state_dict(new_dict)
         elif distutils.initialized() and first_key.split(".")[1] != "module":
             new_dict = {
@@ -430,14 +436,14 @@ class DistillForcesTrainer(BaseTrainer):
         # out_batch = self._distill_forward_energy_forces_only(augmented_batch)
         out_batch = self._distill_forward(augmented_batch)
         #
-        distill_loss = 0.
+        distill_loss = 0.0
         for loss_idx, loss_type in enumerate(self.adversarial_distill_fns):
             distill_loss += (
                 getattr(self, "_" + loss_type)(out_batch, augmented_batch)
                 * self.adversarial_distill_lambda[loss_idx]
             )
         return distill_loss
-    
+
         # TODO: should also support this?
         # return self._compute_loss(
         #     out_batch["out"], augmented_batch, out_batch["t_out"]
@@ -477,7 +483,6 @@ class DistillForcesTrainer(BaseTrainer):
         # to prevent inconsistencies due to different batch size in checkpoint.
         start_epoch = self.step // len(self.train_loader)
 
-
         for epoch_int in range(
             start_epoch, self.config["optim"]["max_epochs"]
         ):
@@ -498,7 +503,7 @@ class DistillForcesTrainer(BaseTrainer):
                     out_batch = self._distill_forward(batch)
                     loss = self._compute_loss(out_batch["out"], batch)
                     # distill_loss = 0.0
-                    distill_loss = [] 
+                    distill_loss = []
                     for loss_idx, loss_type in enumerate(self.distill_fns):
                         # distill_loss += (
                         #     getattr(self, "_" + loss_type)(out_batch, batch)
@@ -666,7 +671,7 @@ class DistillForcesTrainer(BaseTrainer):
                 out_energy,
                 out_forces,
             ] = self.model.extract_features(batch_list)
-            with torch.no_grad():  # TODO: this only suppot using 1 GPU for now.
+            with torch.no_grad():
                 [tfnode, tfe2n, tfvec], [
                     t_out_energy,
                     t_out_forces,
@@ -853,7 +858,7 @@ class DistillForcesTrainer(BaseTrainer):
             natoms_free = []
             for natoms in target["natoms"]:
                 natoms_free.append(
-                    torch.sum(mask[s_idx: s_idx + natoms]).item()
+                    torch.sum(mask[s_idx : s_idx + natoms]).item()
                 )
                 s_idx += natoms
             target["natoms"] = torch.LongTensor(natoms_free).to(self.device)
@@ -933,7 +938,7 @@ class DistillForcesTrainer(BaseTrainer):
                 natoms_free = []
                 for natoms in relaxed_batch.natoms:
                     natoms_free.append(
-                        torch.sum(mask[s_idx: s_idx + natoms]).item()
+                        torch.sum(mask[s_idx : s_idx + natoms]).item()
                     )
                     s_idx += natoms
 
