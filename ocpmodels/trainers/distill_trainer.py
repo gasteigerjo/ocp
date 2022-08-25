@@ -158,9 +158,12 @@ class DistillForcesTrainer(BaseTrainer):
                 "n_adversarial_steps", 100
             )
 
-        self.distill_fns = self.config["distillation"]["distill_loss"].split(
-            ","
-        )
+        self.distill_fns = [
+            dist_fn.strip()
+            for dist_fn in self.config["distillation"]["distill_loss"].split(
+                ","
+            )
+        ]
         if isinstance(self.config["distillation"]["distill_lambda"], float):
             self.distill_lambda = [
                 self.config["distillation"]["distill_lambda"]
@@ -169,9 +172,12 @@ class DistillForcesTrainer(BaseTrainer):
             self.distill_lambda = self.config["distillation"]["distill_lambda"]
 
         if "adversarial" in self.config["distillation"]["distill_loss"]:
-            self.adversarial_distill_fns = self.config["distillation"][
-                "adversarial_distill_loss"
-            ].split(",")
+            self.adversarial_distill_fns = [
+                ad_fn.strip()
+                for ad_fn in self.config["distillation"][
+                    "adversarial_distill_loss"
+                ].split(",")
+            ]
             if isinstance(
                 self.config["distillation"]["adversarial_distill_lambda"],
                 float,
@@ -433,21 +439,22 @@ class DistillForcesTrainer(BaseTrainer):
 
     def _adversarial_jitter_distill_loss(self, out_batch, batch):
         augmented_batch = self._adversarial_batch(batch)
-        # out_batch = self._distill_forward_energy_forces_only(augmented_batch)
         out_batch = self._distill_forward(augmented_batch)
-        #
+
         distill_loss = 0.0
         for loss_idx, loss_type in enumerate(self.adversarial_distill_fns):
-            distill_loss += (
-                getattr(self, "_" + loss_type)(out_batch, augmented_batch)
-                * self.adversarial_distill_lambda[loss_idx]
-            )
+            if loss_type == "regular":
+                distill_loss += (
+                    self._compute_loss(
+                        out_batch["out"], augmented_batch, out_batch["t_out"]
+                    )
+                    * self.adversarial_distill_lambda[loss_idx]
+                )
+            else:
+                distill_loss += getattr(self, "_" + loss_type)(
+                    out_batch, augmented_batch
+                ) * float(self.adversarial_distill_lambda[loss_idx])
         return distill_loss
-
-        # TODO: should also support this?
-        # return self._compute_loss(
-        #     out_batch["out"], augmented_batch, out_batch["t_out"]
-        # )
 
     def _random_jitter_batch(self, batch_list):
         return [self.transform(batch).detach() for batch in batch_list]
