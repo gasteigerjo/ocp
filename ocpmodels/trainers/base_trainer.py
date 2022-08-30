@@ -8,7 +8,6 @@ import datetime
 import errno
 import json
 import logging
-import shortuuid
 import os
 import random
 import subprocess
@@ -16,11 +15,11 @@ from abc import ABC, abstractmethod
 from collections import defaultdict
 
 import numpy as np
+import shortuuid
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import yaml
-from torch.nn.parallel.distributed import DistributedDataParallel
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
@@ -29,6 +28,7 @@ from ocpmodels.common import distutils
 from ocpmodels.common.data_parallel import (
     BalancedBatchSampler,
     OCPDataParallel,
+    OCPDistributedDataParallel,
     ParallelCollater,
 )
 from ocpmodels.common.registry import registry
@@ -70,7 +70,7 @@ class BaseTrainer(ABC):
         name="base_trainer",
         slurm={},
         noddp=False,
-        **kwargs 
+        **kwargs,
     ):
         self.name = name
         self.cpu = cpu
@@ -101,7 +101,7 @@ class BaseTrainer(ABC):
                 self.timestamp_id = timestamp
         else:
             self.timestamp_id = timestamp_id
-        identifier = '-'.join([self.timestamp_id, shortuuid.uuid()])
+        identifier = "-".join([self.timestamp_id, shortuuid.uuid()])
         try:
             commit_hash = (
                 subprocess.check_output(
@@ -356,7 +356,7 @@ class BaseTrainer(ABC):
 
         loader = self.train_loader or self.val_loader or self.test_loader
         self.loader = loader
-        self.bond_feat_dim = bond_feat_dim 
+        self.bond_feat_dim = bond_feat_dim
         self.model = registry.get_model_class(self.config["model"])(
             loader.dataset[0].x.shape[-1]
             if loader
@@ -383,7 +383,7 @@ class BaseTrainer(ABC):
             num_gpus=1 if not self.cpu else 0,
         )
         if distutils.initialized() and not self.config["noddp"]:
-            self.model = DistributedDataParallel(
+            self.model = OCPDistributedDataParallel(
                 self.model, device_ids=[self.device]
             )
 

@@ -12,10 +12,19 @@ from itertools import chain
 import numba
 import numpy as np
 import torch
+from torch.nn.parallel.distributed import DistributedDataParallel
 from torch.utils.data import BatchSampler, DistributedSampler, Sampler
 
 from ocpmodels.common import distutils
 from ocpmodels.datasets import data_list_collater
+
+
+class OCPDistributedDataParallel(DistributedDataParallel):
+    def __getattr__(self, name):
+        try:
+            return super().__getattr__(name)
+        except AttributeError:
+            return getattr(self.module, name)
 
 
 class OCPDataParallel(torch.nn.DataParallel):
@@ -80,7 +89,9 @@ class OCPDataParallel(torch.nn.DataParallel):
             return self.module.extract_features(batch_list[0])
 
         if len(self.device_ids) == 1:
-            return self.module.extract_features(batch_list[0].to(f"cuda:{self.device_ids[0]}"))
+            return self.module.extract_features(
+                batch_list[0].to(f"cuda:{self.device_ids[0]}")
+            )
 
         for t in chain(self.module.parameters(), self.module.buffers()):
             if t.device != self.src_device:
@@ -95,10 +106,12 @@ class OCPDataParallel(torch.nn.DataParallel):
             batch.to(f"cuda:{self.device_ids[i]}")
             for i, batch in enumerate(batch_list)
         ]
-        replicas = self.replicate(self.module.extract_features, self.device_ids[: len(inputs)])
+        replicas = self.replicate(
+            self.module.extract_features, self.device_ids[: len(inputs)]
+        )
         outputs = self.parallel_apply(replicas, inputs, None)
         return self.gather(outputs, self.output_device)
-    
+
 
 class ParallelCollater:
     def __init__(self, num_gpus, otf_graph=False):
