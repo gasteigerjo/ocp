@@ -378,18 +378,18 @@ class DistillForcesTrainer(BaseTrainer):
 
     def _node2node_distill_loss(self, out_batch, batch):
         return torch.nn.functional.mse_loss(
-            out_batch["out"]["n2n_feature"], out_batch["t_out"]["node_feature"]
+            out_batch["out"]["node_feature"], out_batch["t_out"]["node_feature"]
         )
 
     def _edge2node_distill_loss(self, out_batch, batch):
         return torch.nn.functional.mse_loss(
-            out_batch["out"]["e2n_feature"], out_batch["t_out"]["e2n_feature"]
+            out_batch["out"]["n2e_feature"], out_batch["t_out"]["e2n_feature"]
         )
 
     def _vec2vec_distill_loss(self, out_batch, batch):
         return torch.nn.functional.mse_loss(
             out_batch["out"]["vector_feature"],
-            out_batch["t_out"]["vector_feature"],
+            out_batch["t_out"]["vector_feature"]
         )
 
     def _adversarial_batch(self, batch_list):
@@ -497,18 +497,12 @@ class DistillForcesTrainer(BaseTrainer):
                 with torch.cuda.amp.autocast(enabled=self.scaler is not None):
                     out_batch = self._distill_forward(batch)
                     loss = self._compute_loss(out_batch["out"], batch)
-                    # distill_loss = 0.0
                     distill_loss = [] 
                     for loss_idx, loss_type in enumerate(self.distill_fns):
-                        # distill_loss += (
-                        #     getattr(self, "_" + loss_type)(out_batch, batch)
-                        #     * distill_lambda[loss_idx]
-                        # )
                         distill_loss.append(
                             getattr(self, "_" + loss_type)(out_batch, batch)
                             * self.distill_lambda[loss_idx]
                         )
-                    # loss += distill_loss
                     loss += sum(distill_loss)
 
                 loss = self.scaler.scale(loss) if self.scaler else loss
@@ -525,9 +519,6 @@ class DistillForcesTrainer(BaseTrainer):
                 self.metrics = self.evaluator.update(
                     "loss", loss.item() / scale, self.metrics
                 )
-                # self.metrics = self.evaluator.update(
-                #     "distill_loss", distill_loss.item(), self.metrics
-                # )
                 for idx, loss_i in enumerate(distill_loss):
                     self.metrics = self.evaluator.update(
                         f"distill_loss_{idx}", loss_i.item(), self.metrics
@@ -662,17 +653,17 @@ class DistillForcesTrainer(BaseTrainer):
     def _distill_forward(self, batch_list):
         # forward pass.
         if self.config["model_attributes"].get("regress_forces", True):
-            [sfnode, sfe2n, sfvec], [
+            [sfnode, sfn2e, sfvec], [
                 out_energy,
                 out_forces,
             ] = self.model.extract_features(batch_list)
-            with torch.no_grad():  # TODO: this only suppot using 1 GPU for now.
+            with torch.no_grad():
                 [tfnode, tfe2n, tfvec], [
                     t_out_energy,
                     t_out_forces,
                 ] = self.teacher.extract_features(batch_list)
         else:
-            [sfnode, sfe2n, sfvec], out_energy = self.model.extract_features(
+            [sfnode, sfn2e, sfvec], out_energy = self.model.extract_features(
                 batch_list
             )
             with torch.no_grad():
@@ -680,7 +671,7 @@ class DistillForcesTrainer(BaseTrainer):
                     tfnode,
                     tfe2n,
                 ], t_out_energy = self.teacher.extract_features(
-                    batch_list[0].cuda()
+                    batch_list
                 )
 
         if out_energy.shape[-1] == 1:
@@ -689,8 +680,8 @@ class DistillForcesTrainer(BaseTrainer):
             t_out_energy = t_out_energy.view(-1)
 
         out = {
-            "n2n_feature": sfnode,
-            "e2n_feature": sfe2n,
+            "node_feature": sfnode,
+            "n2e_feature": sfn2e,
             "vector_feature": sfvec,
             "energy": out_energy,
         }

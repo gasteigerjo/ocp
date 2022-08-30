@@ -1491,7 +1491,6 @@ class GemNetOC(ScaledModule):
                 E_t, batch, dim=0, dim_size=nMolecules, reduce="mean"
             )  # (nMolecules, num_targets)
 
-        # TODO: here is for edge2node
         m2h = scatter(m, idx_t, dim=0, reduce=self.distill_reduce)
         m2v = scatter(m.unsqueeze(1) * main_graph["vector"].unsqueeze(-1), idx_t, dim=0, reduce=self.distill_reduce)
         

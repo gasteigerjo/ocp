@@ -111,9 +111,9 @@ class PaiNN(ScaledModule):
                 self.v2v_mapping = nn.Identity()
                 
             if hidden_channels != teacher_edge_dim:
-                self.e2n_mapping = nn.Linear(hidden_channels, teacher_edge_dim)
+                self.n2e_mapping = nn.Linear(hidden_channels, teacher_edge_dim)
             else:
-                self.e2n_mapping = nn.Identity()
+                self.n2e_mapping = nn.Identity()
                          
          
         # Borrowed from GemNet.
@@ -501,7 +501,6 @@ class PaiNN(ScaledModule):
         x = self.atom_emb(z)
         vec = torch.zeros(x.size(0), 3, x.size(1), device=x.device)
 
-        # TODO: output student vector feature for distill. vec 
         #### Interaction blocks ###############################################
         # x_list, vec_list = [], []
         for i in range(self.num_layers):
@@ -539,10 +538,10 @@ class PaiNN(ScaledModule):
                     )[0]
                 )
             # return [x_list, vec_list], [energy, forces]
-            return [self.n2n_mapping(x), self.e2n_mapping(x), self.v2v_mapping(vec)], [energy, forces]
+            return [self.n2n_mapping(x), self.n2e_mapping(x), self.v2v_mapping(vec)], [energy, forces]
         else:
             # return [x_list, vec_list], energy
-            return [self.n2n_mapping(x), self.e2n_mapping(x), self.v2v_mapping(vec)], energy
+            return [self.n2n_mapping(x), self.n2e_mapping(x), self.v2v_mapping(vec)], energy
         
     @property
     def num_params(self):

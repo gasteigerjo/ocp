@@ -22,7 +22,7 @@ optim:
   optimizer: AdamW
   optimizer_params: {"amsgrad": True}
   lr_initial: 1.e-4
-  warmup_steps: 80000 # TODO: might need ablate here. 
+  warmup_steps: -1 # no warmup 
   warmup_factor: 0.1  # vis lr in tensorboard
   lr_gamma: 0.45
   lr_milestones:
