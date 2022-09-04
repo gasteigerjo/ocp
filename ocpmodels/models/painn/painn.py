@@ -53,7 +53,6 @@ from .scaling import ScaledModule, ScalingFactor
 from .utils import get_edge_id, repeat_blocks
 
 
-
 # TODO: the best way for using distillation is to implement a DistillModel class, and initize student and teacher model there.
 # TODO: here, I am doing a dirty code, where I just pass distill_args to student model (painn)
 @registry.register_model("painn")
@@ -82,8 +81,8 @@ class PaiNN(ScaledModule):
         otf_graph=True,
         teacher_node_dim=512,
         teacher_edge_dim=512,
-        use_distill=False, 
-        **kwargs 
+        use_distill=False,
+        **kwargs,
     ):
         super(PaiNN, self).__init__()
 
@@ -104,18 +103,17 @@ class PaiNN(ScaledModule):
                 self.n2n_mapping = nn.Linear(hidden_channels, teacher_node_dim)
             else:
                 self.n2n_mapping = nn.Identity()
-                
+
             if hidden_channels != teacher_edge_dim:
                 self.v2v_mapping = nn.Linear(hidden_channels, teacher_edge_dim)
             else:
                 self.v2v_mapping = nn.Identity()
-                
+
             if hidden_channels != teacher_edge_dim:
                 self.n2e_mapping = nn.Linear(hidden_channels, teacher_edge_dim)
             else:
                 self.n2e_mapping = nn.Identity()
-                         
-         
+
         # Borrowed from GemNet.
         self.symmetric_edge_symmetrization = False
 
@@ -456,27 +454,27 @@ class PaiNN(ScaledModule):
 
         #### Output block #####################################################
 
-        per_atom_energy = self.out_energy(x).squeeze(1)
-        energy = scatter(per_atom_energy, batch, dim=0)
+        with torch.cuda.amp.autocast(False):
+            per_atom_energy = self.out_energy(x).squeeze(1)
+            energy = scatter(per_atom_energy, batch, dim=0)
 
-        if self.regress_forces:
-            if self.direct_forces:
-                forces = self.out_forces(x, vec)
-                return energy, forces
+            if self.regress_forces:
+                if self.direct_forces:
+                    forces = self.out_forces(x, vec)
+                    return energy, forces
+                else:
+                    forces = (
+                        -1
+                        * torch.autograd.grad(
+                            x,
+                            pos,
+                            grad_outputs=torch.ones_like(x),
+                            create_graph=True,
+                        )[0]
+                    )
+                    return energy, forces
             else:
-                forces = (
-                    -1
-                    * torch.autograd.grad(
-                        x,
-                        pos,
-                        grad_outputs=torch.ones_like(x),
-                        create_graph=True,
-                    )[0]
-                )
-                return energy, forces
-        else:
-            return energy
-
+                return energy
 
     def extract_features(self, data):
         pos = data.pos
@@ -521,28 +519,36 @@ class PaiNN(ScaledModule):
             # vec_list.append(x)
         #### Output block #####################################################
 
-        per_atom_energy = self.out_energy(x).squeeze(1)
-        energy = scatter(per_atom_energy, batch, dim=0)
-
-        if self.regress_forces:
-            if self.direct_forces:
-                forces = self.out_forces(x, vec)
+        with torch.cuda.amp.autocast(False):
+            per_atom_energy = self.out_energy(x).squeeze(1)
+            energy = scatter(per_atom_energy, batch, dim=0)
+            if self.regress_forces:
+                if self.direct_forces:
+                    forces = self.out_forces(x, vec)
+                else:
+                    forces = (
+                        -1
+                        * torch.autograd.grad(
+                            x,
+                            pos,
+                            grad_outputs=torch.ones_like(x),
+                            create_graph=True,
+                        )[0]
+                    )
+                # return [x_list, vec_list], [energy, forces]
+                return [
+                    self.n2n_mapping(x),
+                    self.n2e_mapping(x),
+                    self.v2v_mapping(vec),
+                ], [energy, forces]
             else:
-                forces = (
-                    -1
-                    * torch.autograd.grad(
-                        x,
-                        pos,
-                        grad_outputs=torch.ones_like(x),
-                        create_graph=True,
-                    )[0]
-                )
-            # return [x_list, vec_list], [energy, forces]
-            return [self.n2n_mapping(x), self.n2e_mapping(x), self.v2v_mapping(vec)], [energy, forces]
-        else:
-            # return [x_list, vec_list], energy
-            return [self.n2n_mapping(x), self.n2e_mapping(x), self.v2v_mapping(vec)], energy
-        
+                # return [x_list, vec_list], energy
+                return [
+                    self.n2n_mapping(x),
+                    self.n2e_mapping(x),
+                    self.v2v_mapping(vec),
+                ], energy
+
     @property
     def num_params(self):
         return sum(p.numel() for p in self.parameters())
