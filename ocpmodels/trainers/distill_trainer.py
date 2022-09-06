@@ -157,7 +157,9 @@ class DistillForcesTrainer(BaseTrainer):
             self.n_adversarial_steps = self.config["distillation"].get(
                 "n_adversarial_steps", 100
             )
-
+            self.adversarial_alpha = self.config["distillation"].get('adversarial_alpha', 0.1)
+            self.adversarial_pgd = self.config["distillation"].get('enable_pgd', False)
+            
         self.distill_fns = [
             dist_fn.strip()
             for dist_fn in self.config["distillation"]["distill_loss"].split(
@@ -424,6 +426,8 @@ class DistillForcesTrainer(BaseTrainer):
             loss = -F.mse_loss(
                 out_batch["out"]["forces"], out_batch["t_out"]["forces"]
             )  # minimize negative loss <=> maximize loss
+
+            # TODO: do we really need this? 
             if loss.item() < min_loss:
                 with torch.no_grad():
                     return_batch = [
@@ -435,9 +439,44 @@ class DistillForcesTrainer(BaseTrainer):
             opt.step()
         return [batch.detach() for batch in return_batch]
 
+    def _adversarial_pgd_batch(self, batch_list):
+        with torch.no_grad():
+            # delta_list = [
+            #     torch.empty(
+            #         batch.pos.shape, requires_grad=True, device=self.device
+            #     ).normal_(0, 0.1)
+            #     for batch in batch_list
+            # ]
+            delta_list = [
+                torch.zeros(
+                    batch.pos.shape, requires_grad=True, device=self.device
+                )
+                for batch in batch_list
+            ]
+        opt = optim.Adam(delta_list, lr=self.adversarial_lr)
+        for i in range(self.n_adversarial_steps):
+            opt.zero_grad()
+            batch_list_noise = [
+                self.transform(batch.clone(), delta)
+                for batch, delta in zip(batch_list, delta_list)
+            ]
+            out_batch = self._distill_forward(batch_list_noise)
+            loss = -F.mse_loss(
+                out_batch["out"]["forces"], out_batch["t_out"]["forces"]
+            )  # minimize negative loss <=> maximize loss
+            loss.backward()
+            for j in range(len(delta_list)):
+                with torch.no_grad():
+                    delta_list[j] += self.adversarial_alpha * delta_list[j].grad.sign()
+        return [batch.detach() for batch in batch_list_noise] 
+    
+    
     def _adversarial_jitter_distill_loss(self, out_batch, batch):
         self.model.eval()
-        augmented_batch = self._adversarial_batch(batch)
+        if self.adversarial_pgd:
+            augmented_batch = self._adversarial_pgd_batch(batch)
+        else:
+            augmented_batch = self._adversarial_batch(batch)
         self.model.train()
         out_batch = self._distill_forward(augmented_batch)
 

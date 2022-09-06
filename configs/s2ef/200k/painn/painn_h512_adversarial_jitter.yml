@@ -8,6 +8,8 @@ distillation:
     distill_lambda: 1.0
     n_adversarial_steps: 3
     adversarial_lr: 0.1
+    adversarial_alpha: 0.1
+    enable_pgd: False
 
 model:
   use_distill: True
