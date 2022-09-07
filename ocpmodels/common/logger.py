@@ -62,6 +62,7 @@ class WandBLogger(Logger):
 
         wandb.init(
             config=self.config,
+            entity=self.config["logger"].get("entity", None),
             id=self.config["cmd"]["timestamp_id"],
             name=self.config["cmd"]["identifier"],
             dir=self.config["cmd"]["logs_dir"],

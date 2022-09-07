@@ -403,6 +403,7 @@ def build_config(args, args_override):
         config["identifier"] = "-".join(str(args.config_yml).split("/")[1:])[
             :-4
         ]
+        config["identifier"] = "-".join([config["identifier"], "-".join(args_override)])
     # Submit
     config["submit"] = args.submit
     config["summit"] = args.summit
