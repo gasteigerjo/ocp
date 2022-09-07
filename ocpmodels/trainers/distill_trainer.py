@@ -441,16 +441,10 @@ class DistillForcesTrainer(BaseTrainer):
 
     def _adversarial_pgd_batch(self, batch_list):
         with torch.no_grad():
-            # delta_list = [
-            #     torch.empty(
-            #         batch.pos.shape, requires_grad=True, device=self.device
-            #     ).normal_(0, 0.1)
-            #     for batch in batch_list
-            # ]
             delta_list = [
-                torch.zeros(
+                torch.empty(
                     batch.pos.shape, requires_grad=True, device=self.device
-                )
+                ).normal_(0, 0.1)
                 for batch in batch_list
             ]
         opt = optim.Adam(delta_list, lr=self.adversarial_lr)
@@ -468,6 +462,11 @@ class DistillForcesTrainer(BaseTrainer):
             for j in range(len(delta_list)):
                 with torch.no_grad():
                     delta_list[j] += self.adversarial_alpha * delta_list[j].grad.sign()
+        
+        batch_list_noise = [
+                self.transform(batch.clone(), delta)
+                for batch, delta in zip(batch_list, delta_list)
+            ]
         return [batch.detach() for batch in batch_list_noise] 
     
     
