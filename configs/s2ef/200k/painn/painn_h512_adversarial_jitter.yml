@@ -6,7 +6,7 @@ distillation:
     adversarial_distill_loss: vec2vec_distill_loss 
     adversarial_distill_lambda: 1.0
     distill_lambda: 1.0
-    n_adversarial_steps: 3
+    n_adversarial_steps: 1
     adversarial_lr: 0.1
     adversarial_alpha: 0.1
     enable_pgd: False

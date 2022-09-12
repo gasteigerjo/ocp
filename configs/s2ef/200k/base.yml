@@ -8,6 +8,8 @@ dataset:
   - src: data/s2ef/val_id_sample
 trainer: forces
 
+amp: True 
+
 logger:
   name: wandb 
   entity: distill_graph
