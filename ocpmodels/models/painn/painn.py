@@ -79,7 +79,7 @@ class PaiNN(ScaledModule):
         direct_forces=True,
         use_pbc=True,
         otf_graph=True,
-        teacher_node_dim=512,
+        teacher_node_dim=256,
         teacher_edge_dim=512,
         use_distill=False,
         **kwargs,
