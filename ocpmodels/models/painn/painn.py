@@ -455,6 +455,8 @@ class PaiNN(ScaledModule):
         #### Output block #####################################################
 
         with torch.cuda.amp.autocast(False):
+            x = x.float()
+            vec = vec.float()
             per_atom_energy = self.out_energy(x).squeeze(1)
             energy = scatter(per_atom_energy, batch, dim=0)
 
@@ -520,6 +522,8 @@ class PaiNN(ScaledModule):
         #### Output block #####################################################
 
         with torch.cuda.amp.autocast(False):
+            x = x.float()
+            vec = vec.float()
             per_atom_energy = self.out_energy(x).squeeze(1)
             energy = scatter(per_atom_energy, batch, dim=0)
             if self.regress_forces:

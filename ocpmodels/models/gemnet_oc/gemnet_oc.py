@@ -1490,17 +1490,21 @@ class GemNetOC(ScaledModule):
             E_t = scatter(
                 E_t, batch, dim=0, dim_size=nMolecules, reduce="mean"
             )  # (nMolecules, num_targets)
-
-        m2h = scatter(
-            m, idx_t, dim=0, dim_size=num_atoms, reduce=self.distill_reduce
-        )
-        m2v = scatter(
-            m.unsqueeze(1) * main_graph["vector"].unsqueeze(-1),
-            idx_t,
-            dim=0,
-            dim_size=num_atoms,
-            reduce=self.distill_reduce,
-        )
+        with torch.cuda.amp.autocast(False):
+            m2h = scatter(
+                m.float(),
+                idx_t,
+                dim=0,
+                dim_size=num_atoms,
+                reduce=self.distill_reduce,
+            )
+            m2v = scatter(
+                m.float().unsqueeze(1) * main_graph["vector"].unsqueeze(-1),
+                idx_t,
+                dim=0,
+                dim_size=num_atoms,
+                reduce=self.distill_reduce,
+            )
 
         if self.regress_forces:
             if self.direct_forces:
