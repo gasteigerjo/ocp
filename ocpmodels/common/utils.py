@@ -396,7 +396,6 @@ def build_config(args, args_override):
     config["is_debug"] = args.debug
     config["run_dir"] = args.run_dir
     config["print_every"] = args.print_every
-    config["amp"] = args.amp
     config["checkpoint"] = args.checkpoint
     config["cpu"] = args.cpu
     if not config["identifier"]:
