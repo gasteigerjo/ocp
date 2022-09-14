@@ -60,9 +60,6 @@ class Flags:
             "--seed", default=0, type=int, help="Seed for torch, cuda, numpy"
         )
         self.parser.add_argument(
-            "--amp", action="store_true", help="Use mixed-precision training"
-        )
-        self.parser.add_argument(
             "--checkpoint", type=str, help="Model checkpoint to load"
         )
         self.parser.add_argument(
