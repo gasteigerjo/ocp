@@ -1,0 +1,5 @@
+includes:
+  - configs/s2ef/200k/painn/painn_h512_adversarial_jitter_pgd.yml
+distillation:
+    pgd_ball: True
+    pgd_lr: 0.1

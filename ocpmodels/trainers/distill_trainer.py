@@ -143,7 +143,7 @@ class DistillForcesTrainer(BaseTrainer):
             )
         self.load_teacher(config["teacher_path"])
         self.teacher.eval()
-        if "randomjitter" in self.config["distillation"]["distill_loss"]:
+        if "random_jitter" in self.config["distillation"]["distill_loss"]:
             self.transform = RandomJitter(
                 {"max_translation": 0.1, "translation_probability": 1.0}
             )
@@ -157,9 +157,19 @@ class DistillForcesTrainer(BaseTrainer):
             self.n_adversarial_steps = self.config["distillation"].get(
                 "n_adversarial_steps", 100
             )
-            self.adversarial_alpha = self.config["distillation"].get('adversarial_alpha', 0.1)
-            self.adversarial_pgd = self.config["distillation"].get('enable_pgd', False)
-            
+            self.adversarial_alpha = self.config["distillation"].get(
+                "adversarial_alpha", 0.1
+            )
+            self.adversarial_pgd = self.config["distillation"].get(
+                "enable_pgd", False
+            )
+            self.adversarial_pgd_ball = (
+                self.config["distillation"].get("pgd_ball", False)
+                and self.adversarial_pgd
+            )
+            if self.adversarial_pgd_ball:
+                self.pgd_lr = self.config["distillation"].get("pgd_lr", 0.1)
+
         self.distill_fns = [
             dist_fn.strip()
             for dist_fn in self.config["distillation"]["distill_loss"].split(
@@ -173,7 +183,10 @@ class DistillForcesTrainer(BaseTrainer):
         else:
             self.distill_lambda = self.config["distillation"]["distill_lambda"]
 
-        if "adversarial" in self.config["distillation"]["distill_loss"]:
+        if (
+            "adversarial" in self.config["distillation"]["distill_loss"]
+            or "random_jitter" in self.config["distillation"]["distill_loss"]
+        ):
             self.adversarial_distill_fns = [
                 ad_fn.strip()
                 for ad_fn in self.config["distillation"][
@@ -392,7 +405,8 @@ class DistillForcesTrainer(BaseTrainer):
 
     def _node2node_distill_loss(self, out_batch, batch):
         return torch.nn.functional.mse_loss(
-            out_batch["out"]["node_feature"], out_batch["t_out"]["node_feature"]
+            out_batch["out"]["node_feature"],
+            out_batch["t_out"]["node_feature"],
         )
 
     def _edge2node_distill_loss(self, out_batch, batch):
@@ -403,7 +417,7 @@ class DistillForcesTrainer(BaseTrainer):
     def _vec2vec_distill_loss(self, out_batch, batch):
         return torch.nn.functional.mse_loss(
             out_batch["out"]["vector_feature"],
-            out_batch["t_out"]["vector_feature"]
+            out_batch["t_out"]["vector_feature"],
         )
 
     def _adversarial_batch(self, batch_list):
@@ -423,11 +437,12 @@ class DistillForcesTrainer(BaseTrainer):
                 for batch, delta in zip(batch_list, delta_list)
             ]
             out_batch = self._distill_forward(batch_list_noise)
-            loss = -F.mse_loss(
-                out_batch["out"]["forces"], out_batch["t_out"]["forces"]
+            loss = -self._compute_loss(
+                out_batch["out"], batch_list_noise, out_batch["t_out"]
             )  # minimize negative loss <=> maximize loss
-
-            # TODO: do we really need this? 
+            loss.backward()
+            opt.step()
+            # TODO: do we really need this?
             if loss.item() < min_loss:
                 with torch.no_grad():
                     return_batch = [
@@ -435,8 +450,6 @@ class DistillForcesTrainer(BaseTrainer):
                         for batch, delta in zip(batch_list, delta_list)
                     ]
                     min_loss = loss.item()
-            loss.backward()
-            opt.step()
         return [batch.detach() for batch in return_batch]
 
     def _adversarial_pgd_batch(self, batch_list):
@@ -455,21 +468,30 @@ class DistillForcesTrainer(BaseTrainer):
                 for batch, delta in zip(batch_list, delta_list)
             ]
             out_batch = self._distill_forward(batch_list_noise)
-            loss = -F.mse_loss(
-                out_batch["out"]["forces"], out_batch["t_out"]["forces"]
+            loss = -self._compute_loss(
+                out_batch["out"], batch_list_noise, out_batch["t_out"]
             )  # minimize negative loss <=> maximize loss
             loss.backward()
             for j in range(len(delta_list)):
                 with torch.no_grad():
-                    delta_list[j] += self.adversarial_alpha * delta_list[j].grad.sign()
-        
+                    if self.adversarial_pgd_ball:
+                        delta_list[j] += torch.clamp(
+                            self.pgd_lr * delta_list[j].grad,
+                            -self.adversarial_alpha,
+                            self.adversarial_alpha,
+                        )
+                    else:
+                        # delta_list[j] += self.adversarial_alpha * delta_list[j].grad.sign()
+                        delta_list[j] += self.adversarial_alpha * F.normalize(
+                            delta_list[j].grad
+                        )
+
         batch_list_noise = [
-                self.transform(batch.clone(), delta)
-                for batch, delta in zip(batch_list, delta_list)
-            ]
-        return [batch.detach() for batch in batch_list_noise] 
-    
-    
+            self.transform(batch.clone(), delta)
+            for batch, delta in zip(batch_list, delta_list)
+        ]
+        return [batch.detach() for batch in batch_list_noise]
+
     def _adversarial_jitter_distill_loss(self, out_batch, batch):
         self.model.eval()
         if self.adversarial_pgd:
@@ -502,9 +524,21 @@ class DistillForcesTrainer(BaseTrainer):
         augmented_batch = self._random_jitter_batch(batch)
         # out_batch = self._distill_forward_energy_forces_only(augmented_batch)
         out_batch = self._distill_forward(augmented_batch)
-        return self._compute_loss(
-            out_batch["out"], augmented_batch, out_batch["t_out"]
-        )
+        distill_loss = 0.0
+        for loss_idx, loss_type in enumerate(self.adversarial_distill_fns):
+            if loss_type == "regular":
+                distill_loss += (
+                    self._compute_loss(
+                        out_batch["out"], augmented_batch, out_batch["t_out"]
+                    )
+                    * self.adversarial_distill_lambda[loss_idx]
+                )
+            else:
+                distill_loss += (
+                    getattr(self, "_" + loss_type)(out_batch, augmented_batch)
+                    * self.adversarial_distill_lambda[loss_idx]
+                )
+        return distill_loss
 
     def train(self, disable_eval_tqdm=False):  # noqa: C901
         eval_every = self.config["optim"].get(
@@ -548,7 +582,7 @@ class DistillForcesTrainer(BaseTrainer):
                 with torch.cuda.amp.autocast(enabled=self.scaler is not None):
                     out_batch = self._distill_forward(batch)
                     loss = self._compute_loss(out_batch["out"], batch)
-                    distill_loss = [] 
+                    distill_loss = []
                     for loss_idx, loss_type in enumerate(self.distill_fns):
                         distill_loss.append(
                             getattr(self, "_" + loss_type)(out_batch, batch)
@@ -721,9 +755,7 @@ class DistillForcesTrainer(BaseTrainer):
                 [
                     tfnode,
                     tfe2n,
-                ], t_out_energy = self.teacher.extract_features(
-                    batch_list
-                )
+                ], t_out_energy = self.teacher.extract_features(batch_list)
 
         if out_energy.shape[-1] == 1:
             out_energy = out_energy.view(-1)
