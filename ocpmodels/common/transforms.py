@@ -114,7 +114,7 @@ class RandomJitter(object):
                 ts.append(
                     data.pos[non_fixed_elements]
                     .new_empty(n)
-                    .uniform_(-abs(t[d]), abs(t[d]))
+                    .normal_(0, abs(t[d]))
                 )
 
             data.pos[non_fixed_elements] = data.pos[
