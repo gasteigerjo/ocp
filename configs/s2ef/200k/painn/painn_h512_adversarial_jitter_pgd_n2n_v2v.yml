@@ -1,0 +1,8 @@
+includes:
+  - configs/s2ef/200k/painn/painn_h512_adversarial_jitter.yml
+distillation:
+    adversarial_alpha: 0.1
+    enable_pgd: True
+    pgd_ball: False
+    adversarial_distill_loss:  node2node_distill_loss, vec2vec_distill_loss 
+    adversarial_distill_lambda: [10,0, 1.0]

@@ -3,7 +3,7 @@ includes:
 trainer: distill
 distillation:
   distill_loss: node2node_distill_loss 
-  distill_lambda: 100.0
+  distill_lambda: 10.0
 
 model:
   use_distill: True
