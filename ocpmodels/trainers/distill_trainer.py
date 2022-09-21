@@ -475,11 +475,15 @@ class DistillForcesTrainer(BaseTrainer):
             for j in range(len(delta_list)):
                 with torch.no_grad():
                     if self.adversarial_pgd_ball:
-                        delta_list[j] += torch.clamp(
-                            self.pgd_lr * delta_list[j].grad,
-                            -self.adversarial_alpha,
-                            self.adversarial_alpha,
+                        gradient = self.pgd_lr * delta_list[j].grad
+                        mask = (
+                            torch.linalg.norm(gradient, dim=1)
+                            > self.adversarial_alpha
                         )
+                        gradient[mask] = self.adversarial_alpha * F.normalize(
+                            gradient[mask]
+                        )
+                        delta_list[j] += gradient
                     else:
                         # delta_list[j] += self.adversarial_alpha * delta_list[j].grad.sign()
                         delta_list[j] += self.adversarial_alpha * F.normalize(
