@@ -48,7 +48,7 @@ class BaseTrainer(ABC):
     @property
     def _unwrapped_model(self):
         module = self.model
-        while isinstance(module, (OCPDataParallel, DistributedDataParallel)):
+        while isinstance(module, (OCPDataParallel, OCPDistributedDataParallel)):
             module = module.module
         return module
 

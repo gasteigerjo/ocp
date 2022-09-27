@@ -954,6 +954,7 @@ def new_trainer_context(*, config: Dict[str, Any], args: Namespace):
             cpu=config.get("cpu", False),
             slurm=config.get("slurm", {}),
             noddp=config.get("noddp", False),
+            config=config, # TODO: dirty way.  we can just use kwargs.
         )
 
         task_cls = registry.get_task_class(config["mode"])
