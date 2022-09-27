@@ -167,8 +167,6 @@ class DistillForcesTrainer(BaseTrainer):
                 self.config["distillation"].get("pgd_ball", False)
                 and self.adversarial_pgd
             )
-            if self.adversarial_pgd_ball:
-                self.pgd_lr = self.config["distillation"].get("pgd_lr", 0.1)
 
         self.distill_fns = [
             dist_fn.strip()
@@ -475,7 +473,7 @@ class DistillForcesTrainer(BaseTrainer):
             for j in range(len(delta_list)):
                 with torch.no_grad():
                     if self.adversarial_pgd_ball:
-                        gradient = self.pgd_lr * delta_list[j].grad
+                        gradient = self.adversarial_lr * delta_list[j].grad
                         mask = (
                             torch.linalg.norm(gradient, dim=1)
                             > self.adversarial_alpha
