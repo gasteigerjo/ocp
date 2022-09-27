@@ -30,6 +30,7 @@ from ocpmodels.models.scn.smearing import (
 from ocpmodels.models.scn.spherical_harmonics import SphericalHarmonicsHelper
 
 try:
+    import e3nn
     from e3nn import o3
 except ImportError:
     pass
@@ -104,9 +105,11 @@ class SphericalChannelNetwork(BaseModel):
 
         if "e3nn" not in sys.modules:
             logging.error(
-                "You need to install the e3nn library to use the SCN model"
+                "You need to install e3nn v0.2.6 to use the SCN model"
             )
             raise ImportError
+
+        assert e3nn.__version__ == "0.2.6"
 
         self.regress_forces = regress_forces
         self.use_pbc = use_pbc
@@ -120,7 +123,7 @@ class SphericalChannelNetwork(BaseModel):
         self.num_sphere_samples = num_sphere_samples
         self.sphere_channels = sphere_channels
         self.sphere_channels_reduce = sphere_channels_reduce
-        self.max_num_neighbors = max_num_neighbors
+        self.max_num_neighbors = self.max_neighbors = max_num_neighbors
         self.num_basis_functions = num_basis_functions
         self.distance_resolution = distance_resolution
         self.grad_forces = False
@@ -276,38 +279,14 @@ class SphericalChannelNetwork(BaseModel):
         num_atoms = len(atomic_numbers)
         pos = data.pos
 
-        if self.otf_graph:
-            edge_index, cell_offsets, neighbors = radius_graph_pbc(
-                data, self.cutoff, self.max_num_neighbors
-            )
-            data.edge_index = edge_index
-            data.cell_offsets = cell_offsets
-            data.neighbors = neighbors
-
-        if self.use_pbc:
-            assert (
-                atomic_numbers.dim() == 1
-                and atomic_numbers.dtype == torch.long
-            )
-
-            out = get_pbc_distances(
-                pos,
-                data.edge_index,
-                data.cell,
-                data.cell_offsets,
-                data.neighbors,
-                return_distance_vec=True,
-            )
-
-            edge_index = out["edge_index"]
-            edge_distance = out["distances"]
-            edge_distance_vec = out["distance_vec"]
-
-        else:
-            edge_index = radius_graph(pos, r=self.cutoff, batch=data.batch)
-            j, i = edge_index
-            edge_distance_vec = pos[j] - pos[i]
-            edge_distance = edge_distance_vec.norm(dim=-1)
+        (
+            edge_index,
+            edge_distance,
+            edge_distance_vec,
+            cell_offsets,
+            _,  # cell offset distances
+            neighbors,
+        ) = self.generate_graph(data)
 
         ###############################################################
         # Initialize data structures

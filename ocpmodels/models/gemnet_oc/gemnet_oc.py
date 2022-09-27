@@ -22,6 +22,8 @@ from ocpmodels.common.utils import (
     get_pbc_distances,
     radius_graph_pbc,
 )
+from ocpmodels.models.base import BaseModel
+from ocpmodels.modules.scaling.compat import load_scales_compat
 
 from .initializers import get_initializer
 from .interaction_indices import (
@@ -36,7 +38,6 @@ from .layers.embedding_block import AtomEmbedding, EdgeEmbedding
 from .layers.force_scaler import ForceScaler
 from .layers.interaction_block import InteractionBlock
 from .layers.radial_basis import RadialBasis
-from .layers.scaling import ScaledModule
 from .layers.spherical_basis import CircularBasisLayer, SphericalBasisLayer
 from .utils import (
     get_angle,
@@ -49,7 +50,7 @@ from .utils import (
 
 
 @registry.register_model("gemnet_oc")
-class GemNetOC(ScaledModule):
+class GemNetOC(BaseModel):
     """
     Arguments
     ---------
@@ -229,13 +230,15 @@ class GemNetOC(ScaledModule):
         forces_coupled: bool = False,
         output_init: str = "HeOrthogonal",
         activation: str = "silu",
-        scale_file: Optional[str] = None,
         quad_interaction: bool = False,
         atom_edge_interaction: bool = False,
         edge_atom_interaction: bool = False,
         atom_interaction: bool = False,
         scale_basis: bool = False,
         qint_tags: list = [0, 1, 2],
+        num_elements: int = 83,
+        otf_graph: bool = False,
+        scale_file: Optional[str] = None,
         distill_reduce: str = "sum",
         **kwargs,  # backwards compatibility with deprecated arguments
     ):
@@ -254,6 +257,7 @@ class GemNetOC(ScaledModule):
         self.atom_interaction = atom_interaction
         self.quad_interaction = quad_interaction
         self.qint_tags = torch.tensor(qint_tags)
+        self.otf_graph = otf_graph
         if not rbf_spherical:
             rbf_spherical = rbf
 
@@ -286,7 +290,7 @@ class GemNetOC(ScaledModule):
         )
 
         # Embedding blocks
-        self.atom_emb = AtomEmbedding(emb_size_atom)
+        self.atom_emb = AtomEmbedding(emb_size_atom, num_elements)
         self.edge_emb = EdgeEmbedding(
             emb_size_atom, num_radial, emb_size_edge, activation=activation
         )
@@ -379,17 +383,7 @@ class GemNetOC(ScaledModule):
         if direct_forces:
             self.out_forces.reset_parameters(out_initializer)
 
-        # Load scaling factors
-        if scale_file is not None:
-            if os.path.isfile(scale_file):
-                scales = torch.load(scale_file, map_location="cpu")
-                self.load_scales(scales)
-            else:
-                logging.warning(
-                    f"Scale file '{scale_file}' does not exist. "
-                    f"The model will use unit scaling factors "
-                    f"unless it was loaded from a checkpoint."
-                )
+        load_scales_compat(self, scale_file)
 
     def set_cutoffs(self, cutoff, cutoff_qint, cutoff_aeaint, cutoff_aint):
         self.cutoff = cutoff
@@ -801,7 +795,7 @@ class GemNetOC(ScaledModule):
 
         # Create indexing array
         edge_reorder_idx = repeat_blocks(
-            new_graph["num_neighbors"] // 2,
+            torch.div(new_graph["num_neighbors"], 2, rounding_mode="floor"),
             repeats=2,
             continuous_indexing=True,
             repeat_inc=edge_index_directed.size(1),
@@ -882,53 +876,27 @@ class GemNetOC(ScaledModule):
             )
         return subgraph
 
-    def generate_graph(self, data, cutoff, max_neighbors):
+    def generate_graph_dict(self, data, cutoff, max_neighbors):
         """Generate a radius/nearest neighbor graph."""
-        otf_graph = cutoff > 6 or max_neighbors > 50
+        otf_graph = cutoff > 6 or max_neighbors > 50 or self.otf_graph
 
-        if self.use_pbc:
-            if otf_graph:
-                edge_index, cell_offsets, num_neighbors = radius_graph_pbc(
-                    data, cutoff, max_neighbors
-                )
-            else:
-                edge_index = data.edge_index
-                cell_offsets = data.cell_offsets
-                num_neighbors = data.neighbors
-
-            out = get_pbc_distances(
-                data.pos,
-                edge_index,
-                data.cell,
-                cell_offsets,
-                num_neighbors,
-                return_offsets=False,
-                return_distance_vec=True,
-            )
-
-            edge_index = out["edge_index"]
-            edge_dist = out["distances"]
-            # These vectors actually point in the opposite direction.
-            # But we want to use col as idx_t for efficient aggregation.
-            edge_vector = -out["distance_vec"] / edge_dist[:, None]
-            cell_offsets = -cell_offsets  # a - c + offset
-        else:
-            otf_graph = True
-            edge_index = radius_graph(
-                data.pos,
-                r=self.cutoff,
-                batch=data.batch,
-                max_num_neighbors=max_neighbors,
-            )
-            j, i = edge_index
-            distance_vec = data.pos[j] - data.pos[i]
-
-            edge_dist = distance_vec.norm(dim=-1)
-            edge_vector = -distance_vec / edge_dist[:, None]
-            cell_offsets = torch.zeros(
-                edge_index.shape[1], 3, device=data.pos.device
-            )
-            num_neighbors = compute_neighbors(data, edge_index)
+        (
+            edge_index,
+            edge_dist,
+            distance_vec,
+            cell_offsets,
+            _,  # cell offset distances
+            num_neighbors,
+        ) = self.generate_graph(
+            data,
+            cutoff=cutoff,
+            max_neighbors=max_neighbors,
+            otf_graph=otf_graph,
+        )
+        # These vectors actually point in the opposite direction.
+        # But we want to use col as idx_t for efficient aggregation.
+        edge_vector = -distance_vec / edge_dist[:, None]
+        cell_offsets = -cell_offsets  # a - c + offset
 
         graph = {
             "edge_index": edge_index,
@@ -995,7 +963,7 @@ class GemNetOC(ScaledModule):
             or self.edge_atom_interaction
             or self.atom_interaction
         ):
-            a2a_graph = self.generate_graph(
+            a2a_graph = self.generate_graph_dict(
                 data, self.cutoff_aint, self.max_neighbors_aint
             )
             main_graph = self.subselect_graph(
@@ -1015,7 +983,7 @@ class GemNetOC(ScaledModule):
                 self.max_neighbors_aint,
             )
         else:
-            main_graph = self.generate_graph(
+            main_graph = self.generate_graph_dict(
                 data, self.cutoff, self.max_neighbors
             )
             a2a_graph = {}
