@@ -1,0 +1,5 @@
+includes:
+  - configs/s2ef/200k/painn/painn_h512_random_jitter.yml
+distillation:
+    adversarial_distill_loss: regular
+    random_fixed_length: True

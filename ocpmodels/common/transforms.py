@@ -95,16 +95,17 @@ class RandomJitter(object):
     """
 
     def __init__(self, config):
-        self.translate = config.get("max_translation", 0.1)
+        self.std_dev = config.get("std_dev", 0.1)
         self.prob = config.get("translation_probability", 1.0)
         assert (
             self.prob <= 1.0
         ), "Probabiltiy of RandomJitter needs to be maximum 1.0"
+        self.fixed_norm = config.get("fixed_norm", None)
 
     def __call__(self, data):
         if random.random() < self.prob:
             non_fixed_elements = ~data.fixed.bool()
-            (n, dim), t = data.pos[non_fixed_elements].size(), self.translate
+            (n, dim), t = data.pos[non_fixed_elements].size(), self.std_dev
             if isinstance(t, numbers.Number):
                 t = list(repeat(t, times=dim))
             assert len(t) == dim
@@ -117,9 +118,14 @@ class RandomJitter(object):
                     .normal_(0, abs(t[d]))
                 )
 
-            data.pos[non_fixed_elements] = data.pos[
-                non_fixed_elements
-            ] + torch.stack(ts, dim=-1)
+            displacement = torch.stack(ts, dim=-1)
+            if self.fixed_norm is not None:
+                displacement = self.fixed_norm * torch.nn.functional.normalize(
+                    displacement
+                )
+            data.pos[non_fixed_elements] = (
+                data.pos[non_fixed_elements] + displacement
+            )
         return data
 
     def __repr__(self) -> str:
