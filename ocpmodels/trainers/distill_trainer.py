@@ -144,9 +144,13 @@ class DistillForcesTrainer(BaseTrainer):
         self.load_teacher(config["teacher_path"])
         self.teacher.eval()
         if "random_jitter" in self.config["distillation"]["distill_loss"]:
-            self.transform = RandomJitter(
-                {"max_translation": 0.1, "translation_probability": 1.0}
-            )
+            jitter_config = {"std_dev": 0.1, "translation_probability": 1.0}
+            if self.config["distillation"].get("random_fixed_length", False):
+                jitter_config["fixed_norm"] = self.config["distillation"].get(
+                    "adversarial_alpha", 0.1
+                )
+            self.transform = RandomJitter(jitter_config)
+
         elif (
             "adversarial_jitter" in self.config["distillation"]["distill_loss"]
         ):
@@ -166,6 +170,9 @@ class DistillForcesTrainer(BaseTrainer):
             self.adversarial_pgd_ball = (
                 self.config["distillation"].get("pgd_ball", False)
                 and self.adversarial_pgd
+            )
+            self.adversarial_init_sd = self.config["distillation"].get(
+                "adversarial_init_sd", 0.1
             )
 
         self.distill_fns = [
@@ -420,14 +427,21 @@ class DistillForcesTrainer(BaseTrainer):
 
     def _adversarial_batch(self, batch_list):
         with torch.no_grad():
-            delta_list = [
-                torch.empty(
-                    batch.pos.shape, requires_grad=True, device=self.device
-                ).normal_(0, 0.1)
-                for batch in batch_list
-            ]
+            if self.adversarial_init_sd > 0:
+                delta_list = [
+                    torch.empty(
+                        batch.pos.shape, requires_grad=True, device=self.device
+                    ).normal_(0, self.adversarial_init_sd)
+                    for batch in batch_list
+                ]
+            else:
+                delta_list = [
+                    torch.zeros(
+                        batch.pos.shape, requires_grad=True, device=self.device
+                    )
+                    for batch in batch_list
+                ]
         opt = optim.Adam(delta_list, lr=self.adversarial_lr)
-        min_loss = 0
         for i in range(self.n_adversarial_steps):
             opt.zero_grad()
             batch_list_noise = [
@@ -441,23 +455,29 @@ class DistillForcesTrainer(BaseTrainer):
             loss.backward()
             opt.step()
             # TODO: do we really need this?
-            if loss.item() < min_loss:
-                with torch.no_grad():
-                    return_batch = [
-                        self.transform(batch.clone(), delta)
-                        for batch, delta in zip(batch_list, delta_list)
-                    ]
-                    min_loss = loss.item()
+            with torch.no_grad():
+                return_batch = [
+                    self.transform(batch.clone(), delta)
+                    for batch, delta in zip(batch_list, delta_list)
+                ]
         return [batch.detach() for batch in return_batch]
 
     def _adversarial_pgd_batch(self, batch_list):
         with torch.no_grad():
-            delta_list = [
-                torch.empty(
-                    batch.pos.shape, requires_grad=True, device=self.device
-                ).normal_(0, 0.1)
-                for batch in batch_list
-            ]
+            if self.adversarial_init_sd > 0:
+                delta_list = [
+                    torch.empty(
+                        batch.pos.shape, requires_grad=True, device=self.device
+                    ).normal_(0, self.adversarial_init_sd)
+                    for batch in batch_list
+                ]
+            else:
+                delta_list = [
+                    torch.zeros(
+                        batch.pos.shape, requires_grad=True, device=self.device
+                    )
+                    for batch in batch_list
+                ]
         opt = optim.Adam(delta_list, lr=self.adversarial_lr)
         for i in range(self.n_adversarial_steps):
             opt.zero_grad()
@@ -466,9 +486,9 @@ class DistillForcesTrainer(BaseTrainer):
                 for batch, delta in zip(batch_list, delta_list)
             ]
             out_batch = self._distill_forward(batch_list_noise)
-            loss = -self._compute_loss(
+            loss = self._compute_loss(
                 out_batch["out"], batch_list_noise, out_batch["t_out"]
-            )  # minimize negative loss <=> maximize loss
+            )
             loss.backward()
             for j in range(len(delta_list)):
                 with torch.no_grad():
