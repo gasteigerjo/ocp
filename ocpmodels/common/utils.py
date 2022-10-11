@@ -440,7 +440,9 @@ def build_config(args, args_override):
         config["identifier"] = "-".join(str(args.config_yml).split("/")[1:])[
             :-4
         ]
-        config["identifier"] = "-".join([config["identifier"], "-".join(args_override)])
+        config["identifier"] = "-".join(
+            [config["identifier"], "-".join(args_override)]
+        )
     # Submit
     config["submit"] = args.submit
     config["summit"] = args.summit
@@ -954,7 +956,7 @@ def new_trainer_context(*, config: Dict[str, Any], args: Namespace):
             cpu=config.get("cpu", False),
             slurm=config.get("slurm", {}),
             noddp=config.get("noddp", False),
-            config=config, # TODO: dirty way.  we can just use kwargs.
+            config=config,  # TODO: dirty way.  we can just use kwargs.
         )
 
         task_cls = registry.get_task_class(config["mode"])
