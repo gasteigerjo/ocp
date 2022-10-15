@@ -8,6 +8,7 @@ This script can
 import argparse
 import os
 import pickle
+import time
 
 import ase.io
 import lmdb
@@ -22,6 +23,8 @@ from ocpmodels.preprocessing import AtomsToGraphs
 
 def run_relaxations(args):
 
+    start = time.time()
+
     if not os.path.isdir(args.adslabs_path):
         raise RuntimeError("Wrong adslabs_path")
     else:
@@ -33,15 +36,17 @@ def run_relaxations(args):
     # paths to initial adslabs (adsorbate + catalyst) for relaxation
     dirs = sorted(os.listdir(args.adslabs_path))
 
+    calc = OCPCalculator(
+        config_yml=args.config_yml, checkpoint=args.checkpoint, device="0"
+    )
+
     for dir in dirs:
         adslab_path = os.path.join(args.adslabs_path, dir, "adslabatoms.pkl")
         adslab = pickle.load(open(adslab_path, "rb"))
 
         # Set up the calculator
         # ["cpu", "0"] where "0"="cuda:0"
-        adslab.calc = OCPCalculator(
-            config_yml=args.config_yml, checkpoint=args.checkpoint, device="0"
-        )
+        adslab.calc = calc
 
         # set up optimizer/iterator
         opt = BFGS(
@@ -51,6 +56,8 @@ def run_relaxations(args):
         # use threshold values as in the OC20 paper:
         # max force among all atoms of 0.03 and a max of 200 iterations
         opt.run(fmax=0.03, steps=200)
+
+    print("time: ", time.time() - start)
 
 
 def run_trajs_to_lmdb(args):
