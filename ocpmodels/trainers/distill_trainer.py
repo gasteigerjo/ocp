@@ -759,50 +759,18 @@ class DistillForcesTrainer(BaseTrainer):
 
     def _distill_forward(self, batch_list):
         # forward pass.
-        if self.config["model_attributes"].get("regress_forces", True):
-            [sfnode, sfn2e, sfvec], [
-                out_energy,
-                out_forces,
-            ] = self.model.extract_features(batch_list)
-            with torch.no_grad():
-                [tfnode, tfe2n, tfvec], [
-                    t_out_energy,
-                    t_out_forces,
-                ] = self.teacher.extract_features(batch_list)
-        else:
-            [sfnode, sfn2e, sfvec], out_energy = self.model.extract_features(
-                batch_list
-            )
-            with torch.no_grad():
-                [
-                    tfnode,
-                    tfe2n,
-                ], t_out_energy = self.teacher.extract_features(batch_list)
+        out = self.model.extract_features(batch_list)
+        out["n2e_feature"] = out.pop("n2e_e2n_feature")
 
-        if out_energy.shape[-1] == 1:
-            out_energy = out_energy.view(-1)
-        if t_out_energy.shape[-1] == 1:
-            t_out_energy = t_out_energy.view(-1)
+        with torch.no_grad():
+            t_out = self.teacher.extract_features(batch_list)
+            t_out["e2n_feature"] = t_out.pop("n2e_e2n_feature")
 
-        out = {
-            "node_feature": sfnode,
-            "n2e_feature": sfn2e,
-            "vector_feature": sfvec,
-            "energy": out_energy,
-        }
+        if out["energy"].shape[-1] == 1:
+            out["energy"] = out["energy"].view(-1)
+        if t_out["energy"].shape[-1] == 1:
+            t_out["energy"] = t_out["energy"].view(-1)
 
-        if self.config["model_attributes"].get("regress_forces", True):
-            out["forces"] = out_forces
-
-        t_out = {
-            "node_feature": tfnode,
-            "e2n_feature": tfe2n,
-            "vector_feature": tfvec,
-            "energy": t_out_energy,
-        }
-
-        if self.config["teacher_model_attributes"].get("regress_forces", True):
-            t_out["forces"] = t_out_forces
         return {"out": out, "t_out": t_out}
 
     def _compute_loss(self, out, batch_list, teacher_output=None):

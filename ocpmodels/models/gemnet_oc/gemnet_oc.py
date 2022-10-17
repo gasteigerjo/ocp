@@ -1539,10 +1539,29 @@ class GemNetOC(ScaledModule):
 
             E_t = E_t.squeeze(1)  # (num_molecules)
             F_t = F_t.squeeze(1)  # (num_atoms, 3)
-            return [h, m2h, m2v], [
-                E_t,
-                F_t,
-            ]  # (nMolecules, num_targets), (nAtoms, 3)
+            # return {
+            #            h, m2h, m2v
+            #        }, \
+            #        [
+            #            E_t,
+            #            F_t,
+            #        ]  # (nMolecules, num_targets), (nAtoms, 3)
+            return {
+                "node_feature": h,
+                "n2e_e2n_feature": m2h,
+                "vector_feature": m2v,
+                "energy": E_t,
+                "forces": F_t,
+            }
         else:
             E_t = E_t.squeeze(1)  # (num_molecules)
-            return [h, m2h, m2v], E_t
+            # return {
+            #            h, m2h, m2v
+            #        }, \
+            #        E_t
+            return {
+                "node_feature": h,
+                "n2e_e2n_feature": m2h,
+                "vector_feature": m2v,
+                "energy": E_t,
+            }

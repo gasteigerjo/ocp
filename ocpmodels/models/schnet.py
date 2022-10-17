@@ -6,6 +6,7 @@ LICENSE file in the root directory of this source tree.
 """
 
 import torch
+from torch import nn
 from torch_geometric.nn import SchNet
 from torch_scatter import scatter
 
@@ -67,6 +68,9 @@ class SchNetWrap(SchNet):
         num_gaussians=50,
         cutoff=10.0,
         readout="add",
+        teacher_node_dim=256,
+        use_distill=False,
+        **kwargs,
     ):
         self.num_targets = num_targets
         self.regress_forces = regress_forces
@@ -82,6 +86,12 @@ class SchNetWrap(SchNet):
             cutoff=cutoff,
             readout=readout,
         )
+
+        if use_distill:
+            if hidden_channels != teacher_node_dim:
+                self.n2n_mapping = nn.Linear(hidden_channels, teacher_node_dim)
+            else:
+                self.n2n_mapping = nn.Identity()
 
     @conditional_grad(torch.enable_grad())
     def _forward(self, data):
@@ -145,6 +155,123 @@ class SchNetWrap(SchNet):
             return energy, forces
         else:
             return energy
+
+    def extract_features(self, data):
+        if self.regress_forces:
+            data.pos.requires_grad_(True)
+
+        z = data.atomic_numbers.long()
+        pos = data.pos
+        batch = data.batch
+
+        if self.otf_graph:
+            edge_index, cell_offsets, neighbors = radius_graph_pbc(
+                data, self.cutoff, 50
+            )
+            data.edge_index = edge_index
+            data.cell_offsets = cell_offsets
+            data.neighbors = neighbors
+
+        # TODO return distance computation in radius_graph_pbc to remove need
+        # for get_pbc_distances call
+        if self.use_pbc:
+            assert z.dim() == 1 and z.dtype == torch.long
+
+            out = get_pbc_distances(
+                pos,
+                data.edge_index,
+                data.cell,
+                data.cell_offsets,
+                data.neighbors,
+            )
+
+            edge_index = out["edge_index"]
+            edge_weight = out["distances"]
+            edge_attr = self.distance_expansion(edge_weight)
+
+            h = self.embedding(z)
+            for interaction in self.interactions:
+                h = h + interaction(h, edge_index, edge_weight, edge_attr)
+
+            h = self.lin1(h)
+            h = self.act(h)
+            h = self.lin2(h)
+
+            batch = torch.zeros_like(z) if batch is None else batch
+            energy = scatter(h, batch, dim=0, reduce=self.readout)
+        else:
+            """"""
+            assert z.dim() == 1 and z.dtype == torch.long
+            batch = torch.zeros_like(z) if batch is None else batch
+
+            h = self.embedding(z)
+
+            edge_index = super(SchNetWrap, self).radius_graph(
+                pos,
+                r=self.cutoff,
+                batch=batch,
+                max_num_neighbors=self.max_num_neighbors,
+            )
+            row, col = edge_index
+            edge_weight = (pos[row] - pos[col]).norm(dim=-1)
+            edge_attr = self.distance_expansion(edge_weight)
+
+            for interaction in self.interactions:
+                h = h + interaction(h, edge_index, edge_weight, edge_attr)
+
+            h = self.lin1(h)
+            h = self.act(h)
+            h = self.lin2(h)
+
+            if self.dipole:
+                # Get center of mass.
+                mass = self.atomic_mass[z].view(-1, 1)
+                c = scatter(mass * pos, batch, dim=0) / scatter(
+                    mass, batch, dim=0
+                )
+                h = h * (pos - c.index_select(0, batch))
+
+            if (
+                not self.dipole
+                and self.mean is not None
+                and self.std is not None
+            ):
+                h = h * self.std + self.mean
+
+            if not self.dipole and self.atomref is not None:
+                h = h + self.atomref(z)
+
+            out = scatter(h, batch, dim=0, reduce=self.readout)
+
+            if self.dipole:
+                out = torch.norm(out, dim=-1, keepdim=True)
+
+            if self.scale is not None:
+                out = self.scale * out
+
+            energy = out
+
+            # energy = super(SchNetWrap, self).forward(z, pos, batch)
+
+        if self.regress_forces:
+            forces = -1 * (
+                torch.autograd.grad(
+                    energy,
+                    data.pos,
+                    grad_outputs=torch.ones_like(energy),
+                    create_graph=True,
+                )[0]
+            )
+            return {
+                "node_feature": self.n2n_mapping(h),
+                "energy": energy,
+                "forces": forces,
+            }
+        else:
+            return {
+                "node_feature": self.n2n_mapping(h),
+                "energy": energy,
+            }
 
     @property
     def num_params(self):

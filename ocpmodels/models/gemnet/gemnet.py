@@ -708,10 +708,10 @@ class GemNetT(torch.nn.Module):
             )  # (nMolecules, num_targets)
 
         # TODO: very dirty code to just make coding running
-        # 1.V_st 
-        # F_st_vec = F_st[:, :, None] * V_st[:, None, :]. vector  
-        m2h = scatter(m, idx_t, dim=0, reduce='mean')
-        
+        # 1.V_st
+        # F_st_vec = F_st[:, :, None] * V_st[:, None, :]. vector
+        m2h = scatter(m, idx_t, dim=0, reduce="mean")
+
         if self.regress_forces:
             if self.direct_forces:
                 # map forces in edge directions
@@ -743,6 +743,17 @@ class GemNetT(torch.nn.Module):
                     )[0]
                     # (nAtoms, 3)
 
-            return [h, m2h], [E_t, F_t]  # (nMolecules, num_targets), (nAtoms, 3)
+            # return [h, m2h], [E_t, F_t]  # (nMolecules, num_targets), (nAtoms, 3)
+            return {
+                "node_feature": h,
+                "n2e_e2n_feature": m2h,
+                "energy": E_t,
+                "forces": F_t,
+            }
         else:
-            return [h, m2h], E_t
+            # return [h, m2h], E_t
+            return {
+                "node_feature": h,
+                "n2e_e2n_feature": m2h,
+                "energy": E_t,
+            }

@@ -540,18 +540,31 @@ class PaiNN(ScaledModule):
                         )[0]
                     )
                 # return [x_list, vec_list], [energy, forces]
-                return [
-                    self.n2n_mapping(x),
-                    self.n2e_mapping(x),
-                    self.v2v_mapping(vec),
-                ], [energy, forces]
+                # return [
+                #     self.n2n_mapping(x),
+                #     self.n2e_mapping(x),
+                #     self.v2v_mapping(vec),
+                # ], [energy, forces]
+                return {
+                    "node_feature": self.n2n_mapping(x),
+                    "n2e_e2n_feature": self.n2e_mapping(x),
+                    "vector_feature": self.v2v_mapping(vec),
+                    "energy": energy,
+                    "forces": forces,
+                }
             else:
                 # return [x_list, vec_list], energy
-                return [
-                    self.n2n_mapping(x),
-                    self.n2e_mapping(x),
-                    self.v2v_mapping(vec),
-                ], energy
+                # return [
+                #     self.n2n_mapping(x),
+                #     self.n2e_mapping(x),
+                #     self.v2v_mapping(vec),
+                # ], energy
+                return {
+                    "node_feature": self.n2n_mapping(x),
+                    "n2e_e2n_feature": self.n2e_mapping(x),
+                    "vector_feature": self.v2v_mapping(vec),
+                    "energy": energy,
+                }
 
     @property
     def num_params(self):
