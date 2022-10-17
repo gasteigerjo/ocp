@@ -416,7 +416,8 @@ class DistillForcesTrainer(BaseTrainer):
 
     def _edge2node_distill_loss(self, out_batch, batch):
         return torch.nn.functional.mse_loss(
-            out_batch["out"]["n2e_feature"], out_batch["t_out"]["e2n_feature"]
+            out_batch["out"]["n2e_e2n_feature"],
+            out_batch["t_out"]["n2e_e2n_feature"],
         )
 
     def _vec2vec_distill_loss(self, out_batch, batch):
@@ -760,11 +761,9 @@ class DistillForcesTrainer(BaseTrainer):
     def _distill_forward(self, batch_list):
         # forward pass.
         out = self.model.extract_features(batch_list)
-        out["n2e_feature"] = out.pop("n2e_e2n_feature")
 
         with torch.no_grad():
             t_out = self.teacher.extract_features(batch_list)
-            t_out["e2n_feature"] = t_out.pop("n2e_e2n_feature")
 
         if out["energy"].shape[-1] == 1:
             out["energy"] = out["energy"].view(-1)
