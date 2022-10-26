@@ -199,6 +199,8 @@ class SchNetWrap(SchNet):
             for interaction in self.interactions:
                 h = h + interaction(h, edge_index, edge_weight, edge_attr)
 
+            h_ = h
+
             h = self.lin1(h)
             h = self.act(h)
             h = self.lin2(h)
@@ -206,7 +208,9 @@ class SchNetWrap(SchNet):
             batch = torch.zeros_like(z) if batch is None else batch
             energy = scatter(h, batch, dim=0, reduce=self.readout)
         else:
-            """"""
+            """
+            Copied from torch_geometric.nn.SchNet's forward() method
+            """
             assert z.dim() == 1 and z.dtype == torch.long
             batch = torch.zeros_like(z) if batch is None else batch
 
@@ -224,6 +228,8 @@ class SchNetWrap(SchNet):
 
             for interaction in self.interactions:
                 h = h + interaction(h, edge_index, edge_weight, edge_attr)
+
+            h_ = h
 
             h = self.lin1(h)
             h = self.act(h)
@@ -269,15 +275,15 @@ class SchNetWrap(SchNet):
                 )[0]
             )
             return {
-                "node_feature": self.n2n_mapping(h),
-                "n2e_feature": self.n2e_mapping(h),
+                "node_feature": self.n2n_mapping(h_),
+                "n2e_feature": self.n2e_mapping(h_),
                 "energy": energy,
                 "forces": forces,
             }
         else:
             return {
-                "node_feature": self.n2n_mapping(h),
-                "n2e_feature": self.n2e_mapping(h),
+                "node_feature": self.n2n_mapping(h_),
+                "n2e_feature": self.n2e_mapping(h_),
                 "energy": energy,
             }
 
