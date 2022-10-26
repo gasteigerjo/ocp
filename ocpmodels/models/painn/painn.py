@@ -547,7 +547,7 @@ class PaiNN(ScaledModule):
                 # ], [energy, forces]
                 return {
                     "node_feature": self.n2n_mapping(x),
-                    "n2e_e2n_feature": self.n2e_mapping(x),
+                    "n2e_feature": self.n2e_mapping(x),
                     "vector_feature": self.v2v_mapping(vec),
                     "energy": energy,
                     "forces": forces,
@@ -561,7 +561,7 @@ class PaiNN(ScaledModule):
                 # ], energy
                 return {
                     "node_feature": self.n2n_mapping(x),
-                    "n2e_e2n_feature": self.n2e_mapping(x),
+                    "n2e_feature": self.n2e_mapping(x),
                     "vector_feature": self.v2v_mapping(vec),
                     "energy": energy,
                 }

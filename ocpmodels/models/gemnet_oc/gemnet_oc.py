@@ -1548,7 +1548,7 @@ class GemNetOC(ScaledModule):
             #        ]  # (nMolecules, num_targets), (nAtoms, 3)
             return {
                 "node_feature": h,
-                "n2e_e2n_feature": m2h,
+                "e2n_feature": m2h,
                 "vector_feature": m2v,
                 "energy": E_t,
                 "forces": F_t,
@@ -1561,7 +1561,7 @@ class GemNetOC(ScaledModule):
             #        E_t
             return {
                 "node_feature": h,
-                "n2e_e2n_feature": m2h,
+                "e2n_feature": m2h,
                 "vector_feature": m2v,
                 "energy": E_t,
             }

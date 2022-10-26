@@ -416,8 +416,8 @@ class DistillForcesTrainer(BaseTrainer):
 
     def _edge2node_distill_loss(self, out_batch, batch):
         return torch.nn.functional.mse_loss(
-            out_batch["out"]["n2e_e2n_feature"],
-            out_batch["t_out"]["n2e_e2n_feature"],
+            out_batch["out"]["n2e_feature"],
+            out_batch["t_out"]["e2n_feature"],
         )
 
     def _vec2vec_distill_loss(self, out_batch, batch):

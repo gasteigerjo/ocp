@@ -69,6 +69,7 @@ class SchNetWrap(SchNet):
         cutoff=10.0,
         readout="add",
         teacher_node_dim=256,
+        teacher_edge_dim=512,
         use_distill=False,
         **kwargs,
     ):
@@ -92,6 +93,11 @@ class SchNetWrap(SchNet):
                 self.n2n_mapping = nn.Linear(hidden_channels, teacher_node_dim)
             else:
                 self.n2n_mapping = nn.Identity()
+
+            if hidden_channels != teacher_edge_dim:
+                self.n2e_mapping = nn.Linear(hidden_channels, teacher_edge_dim)
+            else:
+                self.n2e_mapping = nn.Identity()
 
     @conditional_grad(torch.enable_grad())
     def _forward(self, data):
@@ -264,12 +270,14 @@ class SchNetWrap(SchNet):
             )
             return {
                 "node_feature": self.n2n_mapping(h),
+                "n2e_feature": self.n2e_mapping(h),
                 "energy": energy,
                 "forces": forces,
             }
         else:
             return {
                 "node_feature": self.n2n_mapping(h),
+                "n2e_feature": self.n2e_mapping(h),
                 "energy": energy,
             }
 

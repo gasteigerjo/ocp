@@ -746,7 +746,7 @@ class GemNetT(torch.nn.Module):
             # return [h, m2h], [E_t, F_t]  # (nMolecules, num_targets), (nAtoms, 3)
             return {
                 "node_feature": h,
-                "n2e_e2n_feature": m2h,
+                "e2n_feature": m2h,
                 "energy": E_t,
                 "forces": F_t,
             }
@@ -754,6 +754,6 @@ class GemNetT(torch.nn.Module):
             # return [h, m2h], E_t
             return {
                 "node_feature": h,
-                "n2e_e2n_feature": m2h,
+                "e2n_feature": m2h,
                 "energy": E_t,
             }
