@@ -144,7 +144,10 @@ class DistillForcesTrainer(BaseTrainer):
         self.load_teacher(config["teacher_path"])
         self.teacher.eval()
         if "random_jitter" in self.config["distillation"]["distill_loss"]:
-            jitter_config = {"std_dev": 0.1, "translation_probability": 1.0}
+            jitter_config = {
+                "std_dev": self.config["distillation"].get("random_std", 0.1),
+                "translation_probability": 1.0,
+            }
             if self.config["distillation"].get("random_fixed_length", False):
                 jitter_config["fixed_norm"] = self.config["distillation"].get(
                     "adversarial_alpha", 0.1
