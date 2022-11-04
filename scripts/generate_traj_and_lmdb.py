@@ -136,6 +136,8 @@ def run_trajs_to_lmdb(args):
 
             idx += 1
 
+        print("Index of current frame:", idx)
+
     # length of lmdb file
     txn = db.begin(write=True)
     txn.put("length".encode("ascii"), pickle.dumps(idx, protocol=-1))
