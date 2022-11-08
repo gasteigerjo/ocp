@@ -1,0 +1,14 @@
+includes:
+  - configs/s2ef/200k/schnet/schnet_base_distill.yml
+distillation:
+    distill_loss: adversarial_jitter_distill_loss
+    adversarial_distill_loss: regular
+    adversarial_distill_lambda: 1.0
+    distill_lambda: 1.0
+    n_adversarial_steps: 1
+    adversarial_lr: 0.1
+    adversarial_alpha: 0.1
+    enable_pgd: False
+
+optim:
+  batch_size: 32

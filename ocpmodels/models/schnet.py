@@ -136,7 +136,8 @@ class SchNetWrap(SchNet):
 
             h = self.lin1(h)
             h = self.act(h)
-            h = self.lin2(h)
+            with torch.cuda.amp.autocast(False):
+                h = self.lin2(h.float())
 
             batch = torch.zeros_like(z) if batch is None else batch
             energy = scatter(h, batch, dim=0, reduce=self.readout)
@@ -203,7 +204,8 @@ class SchNetWrap(SchNet):
 
             h = self.lin1(h)
             h = self.act(h)
-            h = self.lin2(h)
+            with torch.cuda.amp.autocast(False):
+                h = self.lin2(h.float())
 
             batch = torch.zeros_like(z) if batch is None else batch
             energy = scatter(h, batch, dim=0, reduce=self.readout)
@@ -233,7 +235,8 @@ class SchNetWrap(SchNet):
 
             h = self.lin1(h)
             h = self.act(h)
-            h = self.lin2(h)
+            with torch.cuda.amp.autocast(False):
+                h = self.lin2(h.float())
 
             if self.dipole:
                 # Get center of mass.
@@ -274,18 +277,20 @@ class SchNetWrap(SchNet):
                     create_graph=True,
                 )[0]
             )
-            return {
-                "node_feature": self.n2n_mapping(h_),
-                "n2e_feature": self.n2e_mapping(h_),
-                "energy": energy,
-                "forces": forces,
-            }
+            with torch.cuda.amp.autocast(False):
+                return {
+                    "node_feature": self.n2n_mapping(h_.float()),
+                    "n2e_feature": self.n2e_mapping(h_.float()),
+                    "energy": energy,
+                    "forces": forces,
+                }
         else:
-            return {
-                "node_feature": self.n2n_mapping(h_),
-                "n2e_feature": self.n2e_mapping(h_),
-                "energy": energy,
-            }
+            with torch.cuda.amp.autocast(False):
+                return {
+                    "node_feature": self.n2n_mapping(h_.float()),
+                    "n2e_feature": self.n2e_mapping(h_.float()),
+                    "energy": energy,
+                }
 
     @property
     def num_params(self):
