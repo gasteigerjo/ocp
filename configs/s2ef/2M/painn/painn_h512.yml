@@ -1,0 +1,44 @@
+includes:
+  - configs/s2ef/2M/base.yml
+
+model:
+  name: painn
+  hidden_channels: 512
+  num_layers: 6
+  num_rbf: 128
+  cutoff: 12.0
+  max_neighbors: 50
+  scale_file: configs/s2ef/200k/painn/painn_nb6_scaling_factors.pt
+  regress_forces: True
+  direct_forces: True
+  use_pbc: True
+
+optim:
+  batch_size: 32
+  eval_batch_size: 32
+  load_balancing: atoms
+  eval_every: 10000 # 200,000 samples. = 6250 iterations per epoch (batch size 32)
+  num_workers: 6
+  optimizer: AdamW
+  optimizer_params: {"amsgrad": True}
+  lr_initial: 1.e-4
+  warmup_steps: -1 # no warmup
+  warmup_factor: 0.1  # vis lr in tensorboard
+  lr_gamma: 0.45
+  lr_milestones:
+  - 160000
+  - 320000
+  - 480000
+  - 640000
+  max_steps: 800000
+  mode: min
+  factor: 0.8
+  patience: 3
+  max_epochs: 80
+  force_coefficient: 100
+  energy_coefficient: 1
+  ema_decay: 0.999
+  clip_grad_norm: 10
+  loss_energy: mae
+  loss_force: l2mae
+  weight_decay: 0

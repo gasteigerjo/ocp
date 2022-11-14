@@ -1,0 +1,7 @@
+includes:
+  - configs/s2ef/2M/painn/painn_h512_adversarial_jitter.yml
+distillation:
+    adversarial_alpha: 0.1
+    enable_pgd: True
+    pgd_ball: False
+    adversarial_init_sd: 0
