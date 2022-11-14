@@ -481,18 +481,19 @@ class DistillForcesTrainer(BaseTrainer):
                     )
                     for batch in batch_list
                 ]
-        opt = optim.Adam(delta_list, lr=self.adversarial_lr)
         for i in range(self.n_adversarial_steps):
-            opt.zero_grad()
             batch_list_noise = [
                 self.transform(batch.clone(), delta)
                 for batch, delta in zip(batch_list, delta_list)
             ]
-            out_batch = self._distill_forward(batch_list_noise)
-            loss = self._compute_loss(
+            out_batch = self._distill_forward(
+                batch_list_noise, teacher_grad=True
+            )
+            loss = self._compute_loss_distill(
                 out_batch["out"], batch_list_noise, out_batch["t_out"]
             )
-            loss.backward()
+
+            torch.autograd.backward([loss], inputs=delta_list)
             for j in range(len(delta_list)):
                 with torch.no_grad():
                     if self.adversarial_pgd_ball:
@@ -530,7 +531,7 @@ class DistillForcesTrainer(BaseTrainer):
         for loss_idx, loss_type in enumerate(self.adversarial_distill_fns):
             if loss_type == "regular":
                 distill_loss += (
-                    self._compute_loss(
+                    self._compute_loss_distill(
                         out_batch["out"], augmented_batch, out_batch["t_out"]
                     )
                     * self.adversarial_distill_lambda[loss_idx]
@@ -543,7 +544,7 @@ class DistillForcesTrainer(BaseTrainer):
         return distill_loss
 
     def _random_jitter_batch(self, batch_list):
-        return [self.transform(batch).detach() for batch in batch_list]
+        return [self.transform(batch.clone()).detach() for batch in batch_list]
 
     def _random_jitter_distill_loss(self, out_batch, batch):
         augmented_batch = self._random_jitter_batch(batch)
@@ -553,7 +554,7 @@ class DistillForcesTrainer(BaseTrainer):
         for loss_idx, loss_type in enumerate(self.adversarial_distill_fns):
             if loss_type == "regular":
                 distill_loss += (
-                    self._compute_loss(
+                    self._compute_loss_distill(
                         out_batch["out"], augmented_batch, out_batch["t_out"]
                     )
                     * self.adversarial_distill_lambda[loss_idx]
@@ -760,23 +761,36 @@ class DistillForcesTrainer(BaseTrainer):
             t_out["forces"] = t_out_forces
         return {"out": out, "t_out": t_out}
 
-    def _distill_forward(self, batch_list):
+    def _distill_forward(self, batch_list, teacher_grad=False):
         # forward pass.
         if self.config["model_attributes"].get("regress_forces", True):
             [sfnode, sfn2e, sfvec], [
                 out_energy,
                 out_forces,
             ] = self.model.extract_features(batch_list)
-            with torch.no_grad():
+            if not teacher_grad:
+                with torch.no_grad():
+                    [tfnode, tfe2n, tfvec], [
+                        t_out_energy,
+                        t_out_forces,
+                    ] = self.teacher.extract_features(batch_list)
+            else:
                 [tfnode, tfe2n, tfvec], [
                     t_out_energy,
                     t_out_forces,
                 ] = self.teacher.extract_features(batch_list)
+
         else:
             [sfnode, sfn2e, sfvec], out_energy = self.model.extract_features(
                 batch_list
             )
-            with torch.no_grad():
+            if not teacher_grad:
+                with torch.no_grad():
+                    [
+                        tfnode,
+                        tfe2n,
+                    ], t_out_energy = self.teacher.extract_features(batch_list)
+            else:
                 [
                     tfnode,
                     tfe2n,
@@ -876,6 +890,125 @@ class DistillForcesTrainer(BaseTrainer):
             else:
                 # Force coefficient = 30 has been working well for us.
                 force_mult = self.config["optim"].get("force_coefficient", 30)
+                if self.config["task"].get("train_on_free_atoms", False):
+                    fixed = torch.cat(
+                        [batch.fixed.to(self.device) for batch in batch_list]
+                    )
+                    mask = fixed == 0
+                    if (
+                        self.config["optim"]
+                        .get("loss_force", "mae")
+                        .startswith("atomwise")
+                    ):
+                        force_mult = self.config["optim"].get(
+                            "force_coefficient", 1
+                        )
+                        natoms = torch.cat(
+                            [
+                                batch.natoms.to(self.device)
+                                for batch in batch_list
+                            ]
+                        )
+                        natoms = torch.repeat_interleave(natoms, natoms)
+                        force_loss = force_mult * self.loss_fn["force"](
+                            out["forces"][mask],
+                            force_target[mask],
+                            natoms=natoms[mask],
+                            batch_size=batch_list[0].natoms.shape[0],
+                        )
+                        loss.append(force_loss)
+                    else:
+                        loss.append(
+                            force_mult
+                            * self.loss_fn["force"](
+                                out["forces"][mask], force_target[mask]
+                            )
+                        )
+                else:
+                    loss.append(
+                        force_mult
+                        * self.loss_fn["force"](out["forces"], force_target)
+                    )
+
+        # Sanity check to make sure the compute graph is correct.
+        for lc in loss:
+            assert hasattr(lc, "grad_fn")
+
+        loss = sum(loss)
+        return loss
+
+    def _compute_loss_distill(self, out, batch_list, teacher_output=None):
+        loss = []
+
+        # Energy loss.
+        if teacher_output is not None:
+            energy_target = teacher_output["energy"]
+        else:
+            energy_target = torch.cat(
+                [batch.y.to(self.device) for batch in batch_list], dim=0
+            )
+        if self.normalizer.get("normalize_labels", False):
+            energy_target = self.normalizers["target"].norm(energy_target)
+        energy_mult = self.config["distillation"].get(
+            "energy_coefficient", 0.0
+        )
+        loss.append(
+            energy_mult * self.loss_fn["energy"](out["energy"], energy_target)
+        )
+
+        # Force loss.
+        if self.config["model_attributes"].get("regress_forces", True):
+            if teacher_output is not None:
+                force_target = teacher_output["forces"]
+            else:
+                force_target = torch.cat(
+                    [batch.force.to(self.device) for batch in batch_list],
+                    dim=0,
+                )
+            if self.normalizer.get("normalize_labels", False):
+                force_target = self.normalizers["grad_target"].norm(
+                    force_target
+                )
+
+            tag_specific_weights = self.config["task"].get(
+                "tag_specific_weights", []
+            )
+            if tag_specific_weights != []:
+                # handle tag specific weights as introduced in forcenet
+                assert len(tag_specific_weights) == 3
+
+                batch_tags = torch.cat(
+                    [
+                        batch.tags.float().to(self.device)
+                        for batch in batch_list
+                    ],
+                    dim=0,
+                )
+                weight = torch.zeros_like(batch_tags)
+                weight[batch_tags == 0] = tag_specific_weights[0]
+                weight[batch_tags == 1] = tag_specific_weights[1]
+                weight[batch_tags == 2] = tag_specific_weights[2]
+
+                loss_force_list = torch.abs(out["forces"] - force_target)
+                train_loss_force_unnormalized = torch.sum(
+                    loss_force_list * weight.view(-1, 1)
+                )
+                train_loss_force_normalizer = 3.0 * weight.sum()
+
+                # add up normalizer to obtain global normalizer
+                distutils.all_reduce(train_loss_force_normalizer)
+
+                # perform loss normalization before backprop
+                train_loss_force_normalized = train_loss_force_unnormalized * (
+                    distutils.get_world_size() / train_loss_force_normalizer
+                )
+                loss.append(train_loss_force_normalized)
+
+            else:
+                # Force coefficient = 30 has been working well for us.
+                force_mult = self.config["distillation"].get(
+                    "force_coefficient", 30
+                )
                 if self.config["task"].get("train_on_free_atoms", False):
                     fixed = torch.cat(
                         [batch.fixed.to(self.device) for batch in batch_list]
