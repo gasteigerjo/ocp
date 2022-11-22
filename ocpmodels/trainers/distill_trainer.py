@@ -952,6 +952,7 @@ class DistillForcesTrainer(BaseTrainer):
         energy_mult = self.config["distillation"].get(
             "energy_coefficient", 0.0
         )
+        # TODO: mask terms
         loss.append(
             energy_mult * self.loss_fn["energy"](out["energy"], energy_target)
         )

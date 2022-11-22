@@ -12,6 +12,7 @@ model:
   regress_forces: True
   direct_forces: True
   use_pbc: True
+  otf_graph: True
 
 optim:
   batch_size: 32
