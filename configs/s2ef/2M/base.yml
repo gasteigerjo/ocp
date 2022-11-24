@@ -7,9 +7,14 @@ dataset:
     target_std: 2.887317180633545
     grad_target_mean: 0.0
     grad_target_std: 2.887317180633545
-  - src: data/s2ef/all/val_id/
+  - src: data/s2ef/val_id_sample
 
-logger: tensorboard
+amp: True
+
+logger:
+  name: wandb
+  entity: distill_graph
+  project: gemnet-painn
 
 task:
   dataset: trajectory_lmdb

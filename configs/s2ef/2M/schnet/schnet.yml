@@ -9,11 +9,13 @@ model:
   num_gaussians: 200
   cutoff: 6.0
   use_pbc: True
+  otf_graph: True
 
 # *** Important note ***
 #   The total number of gpus used for this run was 8.
 #   If the global batch size (num_gpus * batch_size) is modified
 #   the lr_milestones and warmup_steps need to be adjusted accordingly.
+#   8 * 24 = 192 samples per step, i.e. 10416 step per epoch
 
 optim:
   batch_size: 24
