@@ -384,9 +384,25 @@ def build_config(args, args_override):
         )
 
     # Check for overridden parameters.
+    ##########################################################################
+    # transform the "dataset" list to a dict
+    num_datasets = len(config["dataset"])
+    datasets_dict = {}
+    for i in range(num_datasets):
+        datasets_dict[str(i)] = config["dataset"][i]
+    config["dataset"] = datasets_dict
+
+    # apply original argument overwriting and merging
     if args_override != []:
         overrides = create_dict_from_args(args_override)
         config, _ = merge_dicts(config, overrides)
+
+    # transform "dataset" back to a list from the dict
+    datasets_list = []
+    for i in range(num_datasets):
+        datasets_list.append(config["dataset"][str(i)])
+    config["dataset"] = datasets_list
+    ##########################################################################
 
     # Some other flags.
     config["mode"] = args.mode
@@ -402,7 +418,9 @@ def build_config(args, args_override):
         config["identifier"] = "-".join(str(args.config_yml).split("/")[1:])[
             :-4
         ]
-        config["identifier"] = "-".join([config["identifier"], "-".join(args_override)])
+        config["identifier"] = "-".join(
+            [config["identifier"], "-".join(args_override)]
+        )
     # Submit
     config["submit"] = args.submit
     config["summit"] = args.summit
