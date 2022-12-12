@@ -18,6 +18,7 @@ import torch.optim as optim
 import torch_geometric
 from tqdm import tqdm
 
+import wandb
 from ocpmodels.common import distutils
 from ocpmodels.common.data_parallel import (
     BalancedBatchSampler,
@@ -32,6 +33,15 @@ from ocpmodels.common.utils import check_traj_files
 from ocpmodels.modules.evaluator import Evaluator
 from ocpmodels.modules.normalizer import Normalizer
 from ocpmodels.trainers.base_trainer import BaseTrainer
+
+
+def vector_projection(vec1, vec2):
+    # project vec1 on vec2
+    vec2_normalized = torch.nn.functional.normalize(vec2, dim=-1)
+    coef = torch.bmm(
+        vec1.unsqueeze(-2), vec2_normalized.unsqueeze(-1)
+    ).squeeze(-1)
+    return coef * vec2_normalized
 
 
 @registry.register_trainer("distill")
@@ -144,15 +154,19 @@ class DistillForcesTrainer(BaseTrainer):
         self.load_teacher(config["teacher_path"])
         self.teacher.eval()
         if "random_jitter" in self.config["distillation"]["distill_loss"]:
-            jitter_config = {
-                "std_dev": self.config["distillation"].get("random_std", 0.1),
-                "translation_probability": 1.0,
-            }
+            self.random_std = self.config["distillation"].get(
+                "random_std", 0.1
+            )
             if self.config["distillation"].get("random_fixed_length", False):
-                jitter_config["fixed_norm"] = self.config["distillation"].get(
+                self.random_fixed_length = self.config["distillation"].get(
                     "adversarial_alpha", 0.1
                 )
-            self.transform = RandomJitter(jitter_config)
+            else:
+                self.random_fixed_length = False
+            self.random_mode = self.config["distillation"].get(
+                "random_mode", None
+            )
+            self.transform = AddNoise()
 
         elif (
             "adversarial_jitter" in self.config["distillation"]["distill_loss"]
@@ -174,9 +188,23 @@ class DistillForcesTrainer(BaseTrainer):
                 self.config["distillation"].get("pgd_ball", False)
                 and self.adversarial_pgd
             )
+            self.adversarial_pgd_mode = self.config["distillation"].get(
+                "pgd_mode", None
+            )
             self.adversarial_init_sd = self.config["distillation"].get(
                 "adversarial_init_sd", 0.1
             )
+            self.adversarial_teacher_grad = self.config["distillation"].get(
+                "adversarial_teacher_grad", True
+            )
+            self.adversarial_force_prop = self.config["distillation"].get(
+                "adversarial_force_prop", "prop"
+            )
+            self.force_regularization_lambda = self.config["distillation"].get(
+                "force_reg", 0.0
+            )
+        if self.config["logger"]["name"] == "wandb" and distutils.is_master():
+            wandb.config.update({"distillation": self.config["distillation"]})
 
         self.distill_fns = [
             dist_fn.strip()
@@ -486,17 +514,42 @@ class DistillForcesTrainer(BaseTrainer):
                 self.transform(batch.clone(), delta)
                 for batch, delta in zip(batch_list, delta_list)
             ]
-            out_batch = self._distill_forward(
-                batch_list_noise, teacher_grad=True
-            )
-            loss = self._compute_loss_distill(
-                out_batch["out"], batch_list_noise, out_batch["t_out"]
-            )
 
+            out_batch = self._distill_forward(
+                batch_list_noise, teacher_grad=self.adversarial_teacher_grad
+            )
+            loss = 0.0
+            for loss_idx, loss_type in enumerate(self.adversarial_distill_fns):
+                if loss_type == "regular":
+                    loss += (
+                        self._compute_loss_distill(
+                            out_batch["out"],
+                            batch_list_noise,
+                            out_batch["t_out"],
+                        )
+                        * self.adversarial_distill_lambda[loss_idx]
+                    )
+                else:
+                    loss += (
+                        getattr(self, "_" + loss_type)(
+                            out_batch, batch_list_noise
+                        )
+                        * self.adversarial_distill_lambda[loss_idx]
+                    )
+            if self.force_regularization_lambda > 0.0:
+                if not self.adversarial_teacher_grad:
+                    _, t_out_forces = self.teacher(batch_list_noise)
+                    loss -= self.force_regularization_lambda * torch.mean(
+                        torch.linalg.norm(t_out_forces, dim=1)
+                    )
+                else:
+                    loss -= self.force_regularization_lambda * torch.mean(
+                        torch.linalg.norm(out_batch["t_out"]["forces"], dim=1)
+                    )
             torch.autograd.backward([loss], inputs=delta_list)
             for j in range(len(delta_list)):
                 with torch.no_grad():
-                    if self.adversarial_pgd_ball:
+                    if self.adversarial_pgd_mode == "ball":
                         gradient = self.adversarial_lr * delta_list[j].grad
                         mask = (
                             torch.linalg.norm(gradient, dim=1)
@@ -506,8 +559,26 @@ class DistillForcesTrainer(BaseTrainer):
                             gradient[mask]
                         )
                         delta_list[j] += gradient
-                    else:
-                        # delta_list[j] += self.adversarial_alpha * delta_list[j].grad.sign()
+                    elif self.adversarial_pgd_mode == "force_proj":
+                        proj = vector_projection(
+                            delta_list[j].grad, batch_list_noise[j].force
+                        )
+                        displacement = delta_list[j].grad - proj
+                        if self.adversarial_force_prop == "prop":
+                            force_norm = torch.linalg.norm(
+                                batch_list_noise[j].force, dim=1
+                            ).unsqueeze(-1)
+                            norm = self.adversarial_lr * force_norm
+                        elif self.adversarial_force_prop == "inv_prop":
+                            force_norm = torch.linalg.norm(
+                                batch_list_noise[j].force, dim=1
+                            ).unsqueeze(-1)
+                            norm = self.adversarial_lr / force_norm
+                        else:
+                            norm = self.adversarial_alpha
+                        delta_list[j] += norm * F.normalize(displacement)
+
+                    else:  # PGD sphere
                         delta_list[j] += self.adversarial_alpha * F.normalize(
                             delta_list[j].grad
                         )
@@ -544,7 +615,34 @@ class DistillForcesTrainer(BaseTrainer):
         return distill_loss
 
     def _random_jitter_batch(self, batch_list):
-        return [self.transform(batch.clone()).detach() for batch in batch_list]
+        with torch.no_grad():
+            delta_list = [
+                torch.zeros(
+                    batch.pos.shape, requires_grad=False, device=self.device
+                )
+                for batch in batch_list
+            ]
+            for j in range(len(delta_list)):
+                displacement = torch.empty(
+                    batch_list[j].pos.shape,
+                    requires_grad=False,
+                    device=self.device,
+                ).normal_(0, self.random_std)
+                if self.random_mode == "force_proj":
+                    proj = vector_projection(displacement, batch_list[j].force)
+                    displacement = displacement - proj
+                # potentially fix length
+                if self.random_fixed_length:
+                    delta_list[j] += self.random_fixed_length * F.normalize(
+                        displacement
+                    )
+                else:
+                    delta_list[j] += displacement
+        batch_list_noise = [
+            self.transform(batch.clone(), delta)
+            for batch, delta in zip(batch_list, delta_list)
+        ]
+        return [batch.detach() for batch in batch_list_noise]
 
     def _random_jitter_distill_loss(self, out_batch, batch):
         augmented_batch = self._random_jitter_batch(batch)

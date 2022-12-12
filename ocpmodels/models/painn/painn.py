@@ -82,6 +82,7 @@ class PaiNN(ScaledModule):
         teacher_node_dim=256,
         teacher_edge_dim=512,
         use_distill=False,
+        projection_head=False,
         **kwargs,
     ):
         super(PaiNN, self).__init__()
@@ -99,11 +100,19 @@ class PaiNN(ScaledModule):
 
         # TODO: for distillation
         if use_distill:
-            if hidden_channels != teacher_node_dim:
+            if projection_head:
+                self.n2n_mapping = nn.Sequential(
+                    nn.Linear(hidden_channels, hidden_channels),
+                    nn.ReLU(),
+                    nn.Linear(hidden_channels, hidden_channels),
+                    nn.ReLU(),
+                    nn.Linear(hidden_channels, teacher_node_dim),
+                )
+            elif hidden_channels != teacher_node_dim:
                 self.n2n_mapping = nn.Linear(hidden_channels, teacher_node_dim)
             else:
                 self.n2n_mapping = nn.Identity()
-
+            print("n2n_mapping:\n", self.n2n_mapping)
             if hidden_channels != teacher_edge_dim:
                 self.v2v_mapping = nn.Linear(hidden_channels, teacher_edge_dim)
             else:
