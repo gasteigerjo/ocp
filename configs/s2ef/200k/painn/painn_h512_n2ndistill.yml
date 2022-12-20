@@ -2,7 +2,7 @@ includes:
   - configs/s2ef/200k/painn/painn_h512.yml
 trainer: distill
 distillation:
-  distill_loss: node2node_distill_loss 
+  distill_loss: node2node_distill_loss
   distill_lambda: 10.0
 
 model:
@@ -63,4 +63,6 @@ teacher_model:
 
   num_atom_emb_layers: 2
   num_global_out_layers: 2
-  qint_tags: [1, 2] 
+  qint_tags: [1, 2]
+
+  distill_final_features: True
