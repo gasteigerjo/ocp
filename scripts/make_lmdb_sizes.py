@@ -19,8 +19,8 @@ def get_data(index):
     natoms = data.natoms
     neighbors = None
     if hasattr(data, "edge_index"):
-        neighbors = data.edge_index.shape[1]
-
+        if data.edge_index is not None:
+            neighbors = data.edge_index.shape[1]
     return index, natoms, neighbors
 
 
