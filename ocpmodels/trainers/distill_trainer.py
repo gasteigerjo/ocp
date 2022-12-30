@@ -16,9 +16,9 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 import torch_geometric
+import wandb
 from tqdm import tqdm
 
-import wandb
 from ocpmodels.common import distutils
 from ocpmodels.common.data_parallel import (
     BalancedBatchSampler,
@@ -454,6 +454,60 @@ class DistillForcesTrainer(BaseTrainer):
         return torch.nn.functional.mse_loss(
             out_batch["out"]["vector_feature"],
             out_batch["t_out"]["vector_feature"],
+        )
+
+    def _loss_weights_d1M(self, batch):
+
+        if not (
+            ("distillation" in self.config)
+            and ("loss_weighting_synthetic" in self.config["distillation"])
+        ):
+            # This step is redundand with the code below, but for the same of
+            # better readability we set the values to 1 (disabling any
+            # weighting) before we do any computation if the relevant
+            # parameter `loss_weighting_synthetic` cannot be found.
+            w_per_node = torch.ones(batch[0].tags.shape)
+            w_per_sample = torch.ones(batch[0].y.shape)
+
+            return w_per_node, w_per_sample
+
+        ratio_synth_to_dft = self.config["distillation"].get(
+            "loss_weighting_synthetic"
+        )
+        assert ratio_synth_to_dft > 0.0
+
+        # The systems in the original OC20 dataset was drawn with random
+        # numbers between 0...2,499,999, and for our synthetic data we used
+        # seeds between 5,000,000...5,099,999. To distinguist the origin of a
+        # sample (frame along a trajectory) we simply use the seed information
+        # Note: to the best of my knowledge the `seed` in the system sampling
+        # procedure corresponds to the `sid` (system ID) of a datapoint.
+
+        mask_synth_systems_bool = batch[0].sid > 4999999
+        mask_synth_systems_int = torch.where(mask_synth_systems_bool, 1.0, 0.0)
+        batch_ratio_synth = mask_synth_systems_int.mean()
+
+        w_dft = 1 / (
+            1 - batch_ratio_synth + ratio_synth_to_dft * batch_ratio_synth
+        )
+        w_s = ratio_synth_to_dft * w_dft
+
+        synth_idx = mask_synth_systems_bool.nonzero().squeeze()
+        mask_synth_per_node = torch.isin(batch[0].batch, synth_idx)
+        weights_per_node = torch.where(mask_synth_per_node, w_s, w_dft)
+        weights_per_sample = torch.where(mask_synth_systems_bool, w_s, w_dft)
+
+        return weights_per_node, weights_per_sample
+
+    def _vec2vec_distill_loss_d1M(self, out_batch, batch):
+
+        w_per_node, _ = self._loss_weights_d1M(batch)
+        # using the MSE loss we undo the square here
+        w = torch.sqrt(w_per_node)[:, None, None]
+
+        return torch.nn.functional.mse_loss(
+            out_batch["out"]["vector_feature"] * w,
+            out_batch["t_out"]["vector_feature"] * w,
         )
 
     def _adversarial_batch(self, batch_list):
@@ -923,6 +977,14 @@ class DistillForcesTrainer(BaseTrainer):
     def _compute_loss(self, out, batch_list, teacher_output=None):
         loss = []
 
+        # loss weighting setup
+        weight_per_node, weight_per_sample = self._loss_weights_d1M(batch_list)
+        # undo squaring in MSE, if MSE is used
+        if self.loss_fn["energy"] == "mse":
+            weight_per_node = torch.sqrt(weight_per_node)
+        if self.loss_fn["force"] == "mse":
+            weight_per_sample = torch.sqrt(weight_per_sample)
+
         # Energy loss.
         if teacher_output is not None:
             energy_target = teacher_output["energy"]
@@ -932,6 +994,12 @@ class DistillForcesTrainer(BaseTrainer):
             )
         if self.normalizer.get("normalize_labels", False):
             energy_target = self.normalizers["target"].norm(energy_target)
+
+        # loss weighting of energies based on the origin of the data
+        # these scaling factors can be factored out of the loss
+        out["energy"] *= weight_per_sample
+        energy_target *= weight_per_sample
+
         energy_mult = self.config["optim"].get("energy_coefficient", 1)
         loss.append(
             energy_mult * self.loss_fn["energy"](out["energy"], energy_target)
@@ -950,6 +1018,11 @@ class DistillForcesTrainer(BaseTrainer):
                 force_target = self.normalizers["grad_target"].norm(
                     force_target
                 )
+
+            # loss weighting of forces based on the origin of the data
+            # these scaling factors can be factored out of the loss
+            out["forces"] *= weight_per_node[:, None]
+            force_target *= weight_per_node[:, None]
 
             tag_specific_weights = self.config["task"].get(
                 "tag_specific_weights", []
@@ -1050,7 +1123,7 @@ class DistillForcesTrainer(BaseTrainer):
         energy_mult = self.config["distillation"].get(
             "energy_coefficient", 0.0
         )
-        # TODO: mask terms
+
         loss.append(
             energy_mult * self.loss_fn["energy"](out["energy"], energy_target)
         )
