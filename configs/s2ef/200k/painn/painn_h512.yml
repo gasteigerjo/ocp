@@ -12,17 +12,18 @@ model:
   regress_forces: True
   direct_forces: True
   use_pbc: True
+  otf_graph: True
 
 optim:
   batch_size: 32
   eval_batch_size: 32
   load_balancing: atoms
-  eval_every: 10000 # 200,000 samples. = 6250 iterations per epoch (batch size 32) 
+  eval_every: 10000 # 200,000 samples. = 6250 iterations per epoch (batch size 32)
   num_workers: 6
   optimizer: AdamW
   optimizer_params: {"amsgrad": True}
   lr_initial: 1.e-4
-  warmup_steps: -1 # no warmup 
+  warmup_steps: -1 # no warmup
   warmup_factor: 0.1  # vis lr in tensorboard
   lr_gamma: 0.45
   lr_milestones:

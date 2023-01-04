@@ -1,0 +1,12 @@
+includes:
+  - configs/s2ef/2M/painn/painn_h512.yml
+
+dataset:
+  - src: data/s2ef/merged_2M_d1M/train/
+    normalize_labels: True
+    target_mean: -0.7554450631141663
+    target_std: 2.887317180633545
+    grad_target_mean: 0.0
+    grad_target_std: 2.887317180633545
+    target_ratio_synthetic: 0.5  # how many of the samples to be from d1M
+  - src: data/s2ef/val_id_sample
