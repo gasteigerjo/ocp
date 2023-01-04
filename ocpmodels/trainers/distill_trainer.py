@@ -16,6 +16,7 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 import torch_geometric
+from torch_scatter import scatter
 from tqdm import tqdm
 
 import wandb
@@ -439,6 +440,82 @@ class DistillForcesTrainer(BaseTrainer):
                     disable_tqdm=disable_eval_tqdm,
                 )
 
+    def _global_preservation(self, feat_s, feat_t, batch_list):
+        num_atoms_per_image = torch.cat([b.natoms for b in batch_list], dim=0)
+        num_atoms_per_image_sqr = (num_atoms_per_image**2).long()
+
+        # The following is borrowed from common.utils.radius_graph_pbc
+        # index offset between images
+        index_offset = (
+            torch.cumsum(num_atoms_per_image, dim=0) - num_atoms_per_image
+        )
+
+        index_offset_expand = torch.repeat_interleave(
+            index_offset, num_atoms_per_image_sqr
+        )
+        num_atoms_per_image_expand = torch.repeat_interleave(
+            num_atoms_per_image, num_atoms_per_image_sqr
+        )
+
+        # Compute a tensor containing sequences of numbers that range from 0 to num_atoms_per_image_sqr for each image
+        # that is used to compute indices for the pairs of atoms. This is a very convoluted way to implement
+        # the following (but 10x faster since it removes the for loop)
+        # for batch_idx in range(batch_size):
+        #    batch_count = torch.cat([batch_count, torch.arange(num_atoms_per_image_sqr[batch_idx], device=device)], dim=0)
+        num_atom_pairs = torch.sum(num_atoms_per_image_sqr)
+        index_sqr_offset = (
+            torch.cumsum(num_atoms_per_image_sqr, dim=0)
+            - num_atoms_per_image_sqr
+        )
+        index_sqr_offset = torch.repeat_interleave(
+            index_sqr_offset, num_atoms_per_image_sqr
+        )
+        atom_count_sqr = (
+            torch.arange(num_atom_pairs, device=self.device) - index_sqr_offset
+        )
+
+        # Compute the indices for the pairs of atoms (using division and mod)
+        # If the systems get too large this apporach could run into numerical precision issues
+        index1 = (
+            atom_count_sqr // num_atoms_per_image_expand
+        ) + index_offset_expand
+        index2 = (
+            atom_count_sqr % num_atoms_per_image_expand
+        ) + index_offset_expand
+
+        feat_s1 = torch.index_select(feat_s, 0, index1)
+        feat_s2 = torch.index_select(feat_s, 0, index2)
+        feat_t1 = torch.index_select(feat_t, 0, index1)
+        feat_t2 = torch.index_select(feat_t, 0, index2)
+
+        feat_s_distances = torch.mean(
+            F.mse_loss(feat_s1, feat_s2, reduction="none"), dim=1
+        )
+        feat_t_distances = torch.mean(
+            F.mse_loss(feat_t1, feat_t2, reduction="none"), dim=1
+        )
+        while len(feat_s_distances.shape) > 1:
+            feat_s_distances = torch.mean(feat_s_distances, dim=1)
+            feat_t_distances = torch.mean(feat_t_distances, dim=1)
+        dist = F.mse_loss(feat_s_distances, feat_t_distances, reduction="none")
+        loss = scatter(dist, index1, dim=0, reduce="mean")
+        loss = scatter(loss, batch_list[0].batch, dim=0, reduce="mean")
+        return torch.mean(loss)
+
+    def _node_global_preservation_distill_loss(self, out_batch, batch):
+        return self._global_preservation(
+            out_batch["out"]["node_feature"],
+            out_batch["t_out"]["node_feature"],
+            batch,
+        )
+
+    def _vec_global_preservation_distill_loss(self, out_batch, batch):
+        return self._global_preservation(
+            out_batch["out"]["vector_feature"],
+            out_batch["t_out"]["vector_feature"],
+            batch,
+        )
+
     def _node2node_distill_loss(self, out_batch, batch):
         return torch.nn.functional.mse_loss(
             out_batch["out"]["node_feature"],
@@ -631,6 +708,14 @@ class DistillForcesTrainer(BaseTrainer):
                 if self.random_mode == "force_proj":
                     proj = vector_projection(displacement, batch_list[j].force)
                     displacement = displacement - proj
+                if self.random_mode == "proj_on_force":
+                    displacement = vector_projection(
+                        displacement, batch_list[j].force
+                    )
+                if self.random_mode == "sample_from_force":
+                    displacement = torch.normal(
+                        batch_list[j].force, self.random_std
+                    )
                 # potentially fix length
                 if self.random_fixed_length:
                     delta_list[j] += self.random_fixed_length * F.normalize(
