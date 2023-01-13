@@ -55,8 +55,8 @@ def write_images_to_lmdb(mp_arg):
                 ref_energy = float(frame_log[2])
                 data_object.y -= ref_energy
 
-            if "d1M" in args.data_path:
-                data_object.origin = "gemnet-oc-2M"
+            # if "d1M" in args.data_path:
+            #     data_object.origin = "gemnet-oc-2M"
 
             txn = db.begin(write=True)
             txn.put(

@@ -83,7 +83,7 @@ class ForcesTrainer(BaseTrainer):
         cpu=False,
         slurm={},
         noddp=False,
-        **kwargs
+        **kwargs,
     ):
         super().__init__(
             task=task,
@@ -319,6 +319,10 @@ class ForcesTrainer(BaseTrainer):
 
                 # Get a batch.
                 batch = next(train_loader_iter)
+
+                if "regularize_std" in self.config["optim"]:
+                    reg_std = self.config["optim"]["regularize_std"]
+                    batch[0].pos += reg_std * torch.randn_like(batch[0].pos)
 
                 # Forward, loss, backward.
                 with torch.cuda.amp.autocast(enabled=self.scaler is not None):

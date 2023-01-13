@@ -16,6 +16,7 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 import torch_geometric
+from torch_scatter import scatter
 from tqdm import tqdm
 
 import wandb
@@ -439,6 +440,82 @@ class DistillForcesTrainer(BaseTrainer):
                     disable_tqdm=disable_eval_tqdm,
                 )
 
+    def _global_preservation(self, feat_s, feat_t, batch_list):
+        num_atoms_per_image = torch.cat([b.natoms for b in batch_list], dim=0)
+        num_atoms_per_image_sqr = (num_atoms_per_image**2).long()
+
+        # The following is borrowed from common.utils.radius_graph_pbc
+        # index offset between images
+        index_offset = (
+            torch.cumsum(num_atoms_per_image, dim=0) - num_atoms_per_image
+        )
+
+        index_offset_expand = torch.repeat_interleave(
+            index_offset, num_atoms_per_image_sqr
+        )
+        num_atoms_per_image_expand = torch.repeat_interleave(
+            num_atoms_per_image, num_atoms_per_image_sqr
+        )
+
+        # Compute a tensor containing sequences of numbers that range from 0 to num_atoms_per_image_sqr for each image
+        # that is used to compute indices for the pairs of atoms. This is a very convoluted way to implement
+        # the following (but 10x faster since it removes the for loop)
+        # for batch_idx in range(batch_size):
+        #    batch_count = torch.cat([batch_count, torch.arange(num_atoms_per_image_sqr[batch_idx], device=device)], dim=0)
+        num_atom_pairs = torch.sum(num_atoms_per_image_sqr)
+        index_sqr_offset = (
+            torch.cumsum(num_atoms_per_image_sqr, dim=0)
+            - num_atoms_per_image_sqr
+        )
+        index_sqr_offset = torch.repeat_interleave(
+            index_sqr_offset, num_atoms_per_image_sqr
+        )
+        atom_count_sqr = (
+            torch.arange(num_atom_pairs, device=self.device) - index_sqr_offset
+        )
+
+        # Compute the indices for the pairs of atoms (using division and mod)
+        # If the systems get too large this apporach could run into numerical precision issues
+        index1 = (
+            atom_count_sqr // num_atoms_per_image_expand
+        ) + index_offset_expand
+        index2 = (
+            atom_count_sqr % num_atoms_per_image_expand
+        ) + index_offset_expand
+
+        feat_s1 = torch.index_select(feat_s, 0, index1)
+        feat_s2 = torch.index_select(feat_s, 0, index2)
+        feat_t1 = torch.index_select(feat_t, 0, index1)
+        feat_t2 = torch.index_select(feat_t, 0, index2)
+
+        feat_s_distances = torch.mean(
+            F.mse_loss(feat_s1, feat_s2, reduction="none"), dim=1
+        )
+        feat_t_distances = torch.mean(
+            F.mse_loss(feat_t1, feat_t2, reduction="none"), dim=1
+        )
+        while len(feat_s_distances.shape) > 1:
+            feat_s_distances = torch.mean(feat_s_distances, dim=1)
+            feat_t_distances = torch.mean(feat_t_distances, dim=1)
+        dist = F.mse_loss(feat_s_distances, feat_t_distances, reduction="none")
+        loss = scatter(dist, index1, dim=0, reduce="mean")
+        loss = scatter(loss, batch_list[0].batch, dim=0, reduce="mean")
+        return torch.mean(loss)
+
+    def _node_global_preservation_distill_loss(self, out_batch, batch):
+        return self._global_preservation(
+            out_batch["out"]["node_feature"],
+            out_batch["t_out"]["node_feature"],
+            batch,
+        )
+
+    def _vec_global_preservation_distill_loss(self, out_batch, batch):
+        return self._global_preservation(
+            out_batch["out"]["vector_feature"],
+            out_batch["t_out"]["vector_feature"],
+            batch,
+        )
+
     def _node2node_distill_loss(self, out_batch, batch):
         return torch.nn.functional.mse_loss(
             out_batch["out"]["node_feature"],
@@ -454,6 +531,60 @@ class DistillForcesTrainer(BaseTrainer):
         return torch.nn.functional.mse_loss(
             out_batch["out"]["vector_feature"],
             out_batch["t_out"]["vector_feature"],
+        )
+
+    def _loss_weights_d1M(self, batch):
+
+        if not (
+            ("distillation" in self.config)
+            and ("loss_weighting_synthetic" in self.config["distillation"])
+        ):
+            # This step is redundand with the code below, but for the same of
+            # better readability we set the values to 1 (disabling any
+            # weighting) before we do any computation if the relevant
+            # parameter `loss_weighting_synthetic` cannot be found.
+            w_per_node = torch.ones(batch[0].tags.shape)
+            w_per_sample = torch.ones(batch[0].y.shape)
+
+            return w_per_node, w_per_sample
+
+        ratio_synth_to_dft = self.config["distillation"].get(
+            "loss_weighting_synthetic"
+        )
+        assert ratio_synth_to_dft > 0.0
+
+        # The systems in the original OC20 dataset was drawn with random
+        # numbers between 0...2,499,999, and for our synthetic data we used
+        # seeds between 5,000,000...5,099,999. To distinguist the origin of a
+        # sample (frame along a trajectory) we simply use the seed information
+        # Note: to the best of my knowledge the `seed` in the system sampling
+        # procedure corresponds to the `sid` (system ID) of a datapoint.
+
+        mask_synth_systems_bool = batch[0].sid > 4999999
+        mask_synth_systems_int = torch.where(mask_synth_systems_bool, 1.0, 0.0)
+        batch_ratio_synth = mask_synth_systems_int.mean()
+
+        w_dft = 1 / (
+            1 - batch_ratio_synth + ratio_synth_to_dft * batch_ratio_synth
+        )
+        w_s = ratio_synth_to_dft * w_dft
+
+        synth_idx = mask_synth_systems_bool.nonzero().squeeze()
+        mask_synth_per_node = torch.isin(batch[0].batch, synth_idx)
+        weights_per_node = torch.where(mask_synth_per_node, w_s, w_dft)
+        weights_per_sample = torch.where(mask_synth_systems_bool, w_s, w_dft)
+
+        return weights_per_node, weights_per_sample
+
+    def _vec2vec_distill_loss_d1M(self, out_batch, batch):
+
+        w_per_node, _ = self._loss_weights_d1M(batch)
+        # using the MSE loss we undo the square here
+        w = torch.sqrt(w_per_node)[:, None, None]
+
+        return torch.nn.functional.mse_loss(
+            out_batch["out"]["vector_feature"] * w,
+            out_batch["t_out"]["vector_feature"] * w,
         )
 
     def _adversarial_batch(self, batch_list):
@@ -631,6 +762,14 @@ class DistillForcesTrainer(BaseTrainer):
                 if self.random_mode == "force_proj":
                     proj = vector_projection(displacement, batch_list[j].force)
                     displacement = displacement - proj
+                if self.random_mode == "proj_on_force":
+                    displacement = vector_projection(
+                        displacement, batch_list[j].force
+                    )
+                if self.random_mode == "sample_from_force":
+                    displacement = torch.normal(
+                        batch_list[j].force, self.random_std
+                    )
                 # potentially fix length
                 if self.random_fixed_length:
                     delta_list[j] += self.random_fixed_length * F.normalize(
@@ -923,6 +1062,14 @@ class DistillForcesTrainer(BaseTrainer):
     def _compute_loss(self, out, batch_list, teacher_output=None):
         loss = []
 
+        # loss weighting setup
+        weight_per_node, weight_per_sample = self._loss_weights_d1M(batch_list)
+        # undo squaring in MSE, if MSE is used
+        if self.loss_fn["energy"] == "mse":
+            weight_per_node = torch.sqrt(weight_per_node)
+        if self.loss_fn["force"] == "mse":
+            weight_per_sample = torch.sqrt(weight_per_sample)
+
         # Energy loss.
         if teacher_output is not None:
             energy_target = teacher_output["energy"]
@@ -932,6 +1079,12 @@ class DistillForcesTrainer(BaseTrainer):
             )
         if self.normalizer.get("normalize_labels", False):
             energy_target = self.normalizers["target"].norm(energy_target)
+
+        # loss weighting of energies based on the origin of the data
+        # these scaling factors can be factored out of the loss
+        out["energy"] *= weight_per_sample
+        energy_target *= weight_per_sample
+
         energy_mult = self.config["optim"].get("energy_coefficient", 1)
         loss.append(
             energy_mult * self.loss_fn["energy"](out["energy"], energy_target)
@@ -950,6 +1103,11 @@ class DistillForcesTrainer(BaseTrainer):
                 force_target = self.normalizers["grad_target"].norm(
                     force_target
                 )
+
+            # loss weighting of forces based on the origin of the data
+            # these scaling factors can be factored out of the loss
+            out["forces"] *= weight_per_node[:, None]
+            force_target *= weight_per_node[:, None]
 
             tag_specific_weights = self.config["task"].get(
                 "tag_specific_weights", []
@@ -1050,6 +1208,7 @@ class DistillForcesTrainer(BaseTrainer):
         energy_mult = self.config["distillation"].get(
             "energy_coefficient", 0.0
         )
+
         loss.append(
             energy_mult * self.loss_fn["energy"](out["energy"], energy_target)
         )
