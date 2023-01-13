@@ -1,0 +1,5 @@
+includes:
+  - configs/s2ef/2M/painn/painn_h512.yml
+
+optim:
+  regularize_std: 0.1
