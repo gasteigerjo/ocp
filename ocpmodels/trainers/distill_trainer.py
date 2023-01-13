@@ -543,8 +543,8 @@ class DistillForcesTrainer(BaseTrainer):
             # better readability we set the values to 1 (disabling any
             # weighting) before we do any computation if the relevant
             # parameter `loss_weighting_synthetic` cannot be found.
-            w_per_node = torch.ones(batch[0].tags.shape)
-            w_per_sample = torch.ones(batch[0].y.shape)
+            w_per_node = torch.ones_like(batch[0].tags)
+            w_per_sample = torch.ones_like(batch[0].y)
 
             return w_per_node, w_per_sample
 
