@@ -204,6 +204,12 @@ class DistillForcesTrainer(BaseTrainer):
             self.force_regularization_lambda = self.config["distillation"].get(
                 "force_reg", 0.0
             )
+        self.v2v_geom_lambda = self.config["distillation"].get(
+            "v2v_geom_lambda", 0.5
+        )
+        assert (
+            self.v2v_geom_lambda <= 1.0 and self.v2v_geom_lambda >= 0.0
+        ), "distillation.v2v_geom_lambda must be between 0 and 1"
         if self.config["logger"]["name"] == "wandb" and distutils.is_master():
             wandb.config.update({"distillation": self.config["distillation"]})
 
@@ -532,6 +538,30 @@ class DistillForcesTrainer(BaseTrainer):
             out_batch["out"]["vector_feature"],
             out_batch["t_out"]["vector_feature"],
         )
+
+    def _vec2vec_geometric(self, out_batch, batch):
+        dir_loss = 1 - F.cosine_similarity(
+            out_batch["out"]["vector_feature"],
+            out_batch["t_out"]["vector_feature"],
+            1,
+        )
+        dir_loss = torch.mean(dir_loss, dim=1)
+        dir_loss = torch.mean(
+            scatter(dir_loss, batch[0].batch, dim=0, reduce="mean")
+        )
+
+        norm_loss = F.l1_loss(
+            torch.linalg.norm(out_batch["out"]["vector_feature"], dim=1),
+            torch.linalg.norm(out_batch["t_out"]["vector_feature"], dim=1),
+            reduction="none",
+        )
+        norm_loss = torch.mean(norm_loss, dim=1)
+        norm_loss = torch.mean(
+            scatter(norm_loss, batch[0].batch, dim=0, reduce="mean")
+        )
+        return (
+            1 - self.v2v_geom_lambda
+        ) * norm_loss + self.v2v_geom_lambda * dir_loss
 
     def _loss_weights_d1M(self, batch):
 
