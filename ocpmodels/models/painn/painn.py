@@ -83,6 +83,7 @@ class PaiNN(ScaledModule):
         teacher_edge_dim=512,
         use_distill=False,
         projection_head=False,
+        id_mapping=False,
         **kwargs,
     ):
         super(PaiNN, self).__init__()
@@ -108,20 +109,25 @@ class PaiNN(ScaledModule):
                     nn.ReLU(),
                     nn.Linear(hidden_channels, teacher_node_dim),
                 )
-            elif hidden_channels != teacher_node_dim:
-                self.n2n_mapping = nn.Linear(hidden_channels, teacher_node_dim)
-            else:
+            elif id_mapping:
                 self.n2n_mapping = nn.Identity()
+            else:
+                self.n2n_mapping = nn.Linear(hidden_channels, teacher_node_dim)
             print("n2n_mapping:\n", self.n2n_mapping)
-            if hidden_channels != teacher_edge_dim:
-                self.v2v_mapping = nn.Linear(hidden_channels, teacher_edge_dim)
-            else:
-                self.v2v_mapping = nn.Identity()
 
-            if hidden_channels != teacher_edge_dim:
-                self.n2e_mapping = nn.Linear(hidden_channels, teacher_edge_dim)
+            if id_mapping:
+                self.v2v_mapping = nn.Identity()
             else:
+                self.v2v_mapping = nn.Linear(
+                    hidden_channels, teacher_edge_dim, bias=False
+                )
+            print("v2v_mapping:\n", self.v2v_mapping)
+
+            if id_mapping:
                 self.n2e_mapping = nn.Identity()
+            else:
+                self.n2e_mapping = nn.Linear(hidden_channels, teacher_edge_dim)
+            print("n2e_mapping:\n", self.n2e_mapping)
 
         # Borrowed from GemNet.
         self.symmetric_edge_symmetrization = False
