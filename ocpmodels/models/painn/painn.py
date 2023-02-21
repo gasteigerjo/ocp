@@ -103,11 +103,9 @@ class PaiNN(ScaledModule):
         if use_distill:
             if projection_head:
                 self.n2n_mapping = nn.Sequential(
-                    nn.Linear(hidden_channels, hidden_channels),
+                    nn.Linear(hidden_channels, 2 * hidden_channels),
                     nn.ReLU(),
-                    nn.Linear(hidden_channels, hidden_channels),
-                    nn.ReLU(),
-                    nn.Linear(hidden_channels, teacher_node_dim),
+                    nn.Linear(2 * hidden_channels, teacher_node_dim),
                 )
             elif id_mapping:
                 self.n2n_mapping = nn.Identity()
@@ -123,7 +121,13 @@ class PaiNN(ScaledModule):
                 )
             print("v2v_mapping:\n", self.v2v_mapping)
 
-            if id_mapping:
+            if projection_head:
+                self.n2e_mapping = nn.Sequential(
+                    nn.Linear(hidden_channels, 2 * hidden_channels),
+                    nn.ReLU(),
+                    nn.Linear(2 * hidden_channels, teacher_edge_dim),
+                )
+            elif id_mapping:
                 self.n2e_mapping = nn.Identity()
             else:
                 self.n2e_mapping = nn.Linear(hidden_channels, teacher_edge_dim)
