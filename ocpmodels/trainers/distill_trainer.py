@@ -16,10 +16,10 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 import torch_geometric
+import wandb
 from torch_scatter import scatter
 from tqdm import tqdm
 
-import wandb
 from ocpmodels.common import distutils
 from ocpmodels.common.data_parallel import (
     BalancedBatchSampler,
@@ -563,13 +563,20 @@ class DistillForcesTrainer(BaseTrainer):
             1 - self.v2v_geom_lambda
         ) * norm_loss + self.v2v_geom_lambda * dir_loss
 
-    def _loss_weights_d1M(self, batch):
+    def _loss_weights_d1M(self, batch, loss_type="main"):
+        """
+        loss_type: str
+            "main" or "distill" to distinguist between the main loss and the
+            distillation loss. At this stage we hard-code "main" to consider
+            only ground truth samples (no synthetic samples) and "distill" to
+            weight both terms with the loss_weighting_synthetic parameter.
+        """
 
         if not (
             ("distillation" in self.config)
             and ("loss_weighting_synthetic" in self.config["distillation"])
         ):
-            # This step is redundand with the code below, but for the same of
+            # This step is redundand with the code below, but for the sake of
             # better readability we set the values to 1 (disabling any
             # weighting) before we do any computation if the relevant
             # parameter `loss_weighting_synthetic` cannot be found.
@@ -593,11 +600,14 @@ class DistillForcesTrainer(BaseTrainer):
         mask_synth_systems_bool = batch[0].sid > 4999999
         mask_synth_systems_int = torch.where(mask_synth_systems_bool, 1.0, 0.0)
         batch_ratio_synth = mask_synth_systems_int.mean()
-
-        w_dft = 1 / (
-            1 - batch_ratio_synth + ratio_synth_to_dft * batch_ratio_synth
-        )
-        w_s = ratio_synth_to_dft * w_dft
+        if loss_type == "distill":
+            w_dft = 1 / (
+                1 - batch_ratio_synth + ratio_synth_to_dft * batch_ratio_synth
+            )
+            w_s = ratio_synth_to_dft * w_dft
+        elif loss_type == "main":
+            w_dft = 1 / (1 - batch_ratio_synth)
+            w_s = 0.0 * w_dft
 
         synth_idx = mask_synth_systems_bool.nonzero().squeeze()
         mask_synth_per_node = torch.isin(batch[0].batch, synth_idx)
@@ -608,13 +618,24 @@ class DistillForcesTrainer(BaseTrainer):
 
     def _vec2vec_distill_loss_d1M(self, out_batch, batch):
 
-        w_per_node, _ = self._loss_weights_d1M(batch)
+        w_per_node, _ = self._loss_weights_d1M(batch, loss_type="distill")
         # using the MSE loss we undo the square here
         w = torch.sqrt(w_per_node)[:, None, None]
 
         return torch.nn.functional.mse_loss(
             out_batch["out"]["vector_feature"] * w,
             out_batch["t_out"]["vector_feature"] * w,
+        )
+
+    def _node2node_distill_loss_d1M(self, out_batch, batch):
+
+        w_per_node, _ = self._loss_weights_d1M(batch, loss_type="distill")
+        # using the MSE loss we undo the square here
+        w = torch.sqrt(w_per_node)[:, None]
+
+        return torch.nn.functional.mse_loss(
+            out_batch["out"]["node_feature"] * w,
+            out_batch["t_out"]["node_feature"] * w,
         )
 
     def _adversarial_batch(self, batch_list):
@@ -1093,7 +1114,9 @@ class DistillForcesTrainer(BaseTrainer):
         loss = []
 
         # loss weighting setup
-        weight_per_node, weight_per_sample = self._loss_weights_d1M(batch_list)
+        weight_per_node, weight_per_sample = self._loss_weights_d1M(
+            batch_list, loss_type="main"
+        )
         # undo squaring in MSE, if MSE is used
         if self.loss_fn["energy"] == "mse":
             weight_per_node = torch.sqrt(weight_per_node)
