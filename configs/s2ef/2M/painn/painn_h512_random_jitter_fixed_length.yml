@@ -1,5 +1,7 @@
 includes:
   - configs/s2ef/2M/painn/painn_h512_random_jitter.yml
 distillation:
-    adversarial_distill_loss: regular
+    adversarial_distill_loss: vec2vec_distill_loss
     random_fixed_length: True
+    adversarial_alpha: 0.4
+    force_coefficient: 100
