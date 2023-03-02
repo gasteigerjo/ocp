@@ -133,6 +133,18 @@ class PaiNN(ScaledModule):
                 self.n2e_mapping = nn.Linear(hidden_channels, teacher_edge_dim)
             print("n2e_mapping:\n", self.n2e_mapping)
 
+            if projection_head:
+                self.e2e_mapping = nn.Sequential(
+                    nn.Linear(hidden_channels, 2 * hidden_channels),
+                    nn.ReLU(),
+                    nn.Linear(2 * hidden_channels, teacher_edge_dim),
+                )
+            elif id_mapping:
+                self.e2e_mapping = nn.Identity()
+            else:
+                self.e2e_mapping = nn.Linear(hidden_channels, teacher_edge_dim)
+            print("e2e_mapping:\n", self.e2e_mapping)
+
         # Borrowed from GemNet.
         self.symmetric_edge_symmetrization = False
 
@@ -497,7 +509,9 @@ class PaiNN(ScaledModule):
             else:
                 return energy
 
-    def extract_features(self, data):
+    def extract_features(self, data_and_graph):
+        data = data_and_graph[0]
+        main_graph = data_and_graph[1]
         pos = data.pos
         batch = data.batch
         z = data.atomic_numbers.long()
@@ -505,13 +519,18 @@ class PaiNN(ScaledModule):
         if self.regress_forces and not self.direct_forces:
             pos = pos.requires_grad_(True)
 
-        (
-            edge_index,
-            neighbors,
-            edge_dist,
-            edge_vector,
-            id_swap,
-        ) = self.generate_graph(data)
+        if main_graph is None:
+            (
+                edge_index,
+                neighbors,
+                edge_dist,
+                edge_vector,
+                id_swap,
+            ) = self.generate_graph(data)
+        else:
+            edge_index = main_graph["edge_index"]
+            edge_dist = main_graph["distance"]
+            edge_vector = main_graph["vector"]
 
         assert z.dim() == 1 and z.dtype == torch.long
 
@@ -523,7 +542,7 @@ class PaiNN(ScaledModule):
         #### Interaction blocks ###############################################
         # x_list, vec_list = [], []
         for i in range(self.num_layers):
-            dx, dvec = self.message_layers[i](
+            dx, dvec, e_feat = self.message_layers[i](
                 x, vec, edge_index, edge_rbf, edge_vector
             )
 
@@ -543,6 +562,7 @@ class PaiNN(ScaledModule):
         with torch.cuda.amp.autocast(False):
             x = x.float()
             vec = vec.float()
+            e_feat = e_feat.float()  # using from the latest layer
             per_atom_energy = self.out_energy(x).squeeze(1)
             energy = scatter(per_atom_energy, batch, dim=0)
             if self.regress_forces:
@@ -563,6 +583,7 @@ class PaiNN(ScaledModule):
                     self.n2n_mapping(x),
                     self.n2e_mapping(x),
                     self.v2v_mapping(vec),
+                    self.e2e_mapping(e_feat),
                 ], [energy, forces]
             else:
                 # return [x_list, vec_list], energy
@@ -626,7 +647,7 @@ class PaiNNMessage(MessagePassing):
         rbfh = self.rbf_proj(edge_rbf)
 
         # propagate_type: (xh: Tensor, vec: Tensor, rbfh_ij: Tensor, r_ij: Tensor)
-        dx, dvec = self.propagate(
+        dx, dvec, e_feat = self.propagate(
             edge_index,
             xh=xh,
             vec=vec,
@@ -635,7 +656,7 @@ class PaiNNMessage(MessagePassing):
             size=None,
         )
 
-        return dx, dvec
+        return dx, dvec, e_feat
 
     def message(self, xh_j, vec_j, rbfh_ij, r_ij):
         x, xh2, xh3 = torch.split(xh_j * rbfh_ij, self.hidden_channels, dim=-1)
@@ -644,19 +665,19 @@ class PaiNNMessage(MessagePassing):
         vec = vec_j * xh2.unsqueeze(1) + xh3.unsqueeze(1) * r_ij.unsqueeze(2)
         vec = vec * self.inv_sqrt_h
 
-        return x, vec
+        return x, vec, xh2
 
     def aggregate(
         self,
-        features: Tuple[torch.Tensor, torch.Tensor],
+        features: Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
         index: torch.Tensor,
         ptr: Optional[torch.Tensor],
         dim_size: Optional[int],
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        x, vec = features
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        x, vec, e_feat = features
         x = scatter(x, index, dim=self.node_dim, dim_size=dim_size)
         vec = scatter(vec, index, dim=self.node_dim, dim_size=dim_size)
-        return x, vec
+        return x, vec, e_feat
 
     def update(
         self, inputs: Tuple[torch.Tensor, torch.Tensor]

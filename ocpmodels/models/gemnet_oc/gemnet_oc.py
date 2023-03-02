@@ -1395,7 +1395,8 @@ class GemNetOC(ScaledModule):
     def num_params(self):
         return sum(p.numel() for p in self.parameters())
 
-    def extract_features(self, data):
+    def extract_features(self, data_and_graph):
+        data = data_and_graph[0]
         pos = data.pos
         batch = data.batch
         atomic_numbers = data.atomic_numbers.long()
@@ -1515,8 +1516,13 @@ class GemNetOC(ScaledModule):
                 reduce=self.distill_reduce,
             )
 
-        features_to_distill = [features_to_distill[0], m2h, m2v]
-
+        features_to_distill = [
+            features_to_distill[0],
+            m2h,
+            m2v,
+            features_to_distill[1],
+        ]
+        main_graph["id_swap"] = id_swap
         if self.regress_forces:
             if self.direct_forces:
                 if self.forces_coupled:  # enforce F_st = F_ts
@@ -1550,10 +1556,14 @@ class GemNetOC(ScaledModule):
 
             E_t = E_t.squeeze(1)  # (num_molecules)
             F_t = F_t.squeeze(1)  # (num_atoms, 3)
-            return features_to_distill, [
-                E_t,
-                F_t,
-            ]  # (nMolecules, num_targets), (nAtoms, 3)
+            return (
+                features_to_distill,
+                [
+                    E_t,
+                    F_t,
+                ],
+                main_graph,
+            )  # (nMolecules, num_targets), (nAtoms, 3)
         else:
             E_t = E_t.squeeze(1)  # (num_molecules)
-            return features_to_distill, E_t
+            return features_to_distill, E_t, main_graph
