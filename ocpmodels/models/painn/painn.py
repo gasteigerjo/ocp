@@ -530,7 +530,7 @@ class PaiNN(ScaledModule):
         else:
             edge_index = main_graph["edge_index"]
             edge_dist = main_graph["distance"]
-            edge_vector = main_graph["vector"]
+            edge_vector = -main_graph["vector"]
 
         assert z.dim() == 1 and z.dtype == torch.long
 
@@ -542,7 +542,7 @@ class PaiNN(ScaledModule):
         #### Interaction blocks ###############################################
         # x_list, vec_list = [], []
         for i in range(self.num_layers):
-            dx, dvec, e_feat = self.message_layers[i](
+            dx, dvec = self.message_layers[i](
                 x, vec, edge_index, edge_rbf, edge_vector
             )
 
@@ -558,6 +558,9 @@ class PaiNN(ScaledModule):
             # x_list.append(x)
             # vec_list.append(x)
         #### Output block #####################################################
+        vec1 = vec[edge_index[0]]
+        vec2 = vec[edge_index[1]]
+        e_feat = (vec1 * vec2).sum(dim=-2)
 
         with torch.cuda.amp.autocast(False):
             x = x.float()
@@ -647,7 +650,7 @@ class PaiNNMessage(MessagePassing):
         rbfh = self.rbf_proj(edge_rbf)
 
         # propagate_type: (xh: Tensor, vec: Tensor, rbfh_ij: Tensor, r_ij: Tensor)
-        dx, dvec, e_feat = self.propagate(
+        dx, dvec = self.propagate(
             edge_index,
             xh=xh,
             vec=vec,
@@ -656,7 +659,7 @@ class PaiNNMessage(MessagePassing):
             size=None,
         )
 
-        return dx, dvec, e_feat
+        return dx, dvec
 
     def message(self, xh_j, vec_j, rbfh_ij, r_ij):
         x, xh2, xh3 = torch.split(xh_j * rbfh_ij, self.hidden_channels, dim=-1)
@@ -665,19 +668,19 @@ class PaiNNMessage(MessagePassing):
         vec = vec_j * xh2.unsqueeze(1) + xh3.unsqueeze(1) * r_ij.unsqueeze(2)
         vec = vec * self.inv_sqrt_h
 
-        return x, vec, xh2
+        return x, vec
 
     def aggregate(
         self,
-        features: Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+        features: Tuple[torch.Tensor, torch.Tensor],
         index: torch.Tensor,
         ptr: Optional[torch.Tensor],
         dim_size: Optional[int],
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        x, vec, e_feat = features
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        x, vec = features
         x = scatter(x, index, dim=self.node_dim, dim_size=dim_size)
         vec = scatter(vec, index, dim=self.node_dim, dim_size=dim_size)
-        return x, vec, e_feat
+        return x, vec
 
     def update(
         self, inputs: Tuple[torch.Tensor, torch.Tensor]
