@@ -133,6 +133,18 @@ class PaiNN(ScaledModule):
                 self.n2e_mapping = nn.Linear(hidden_channels, teacher_edge_dim)
             print("n2e_mapping:\n", self.n2e_mapping)
 
+            if projection_head:
+                self.e2e_mapping = nn.Sequential(
+                    nn.Linear(hidden_channels, 2 * hidden_channels),
+                    nn.ReLU(),
+                    nn.Linear(2 * hidden_channels, teacher_edge_dim),
+                )
+            elif id_mapping:
+                self.e2e_mapping = nn.Identity()
+            else:
+                self.e2e_mapping = nn.Linear(hidden_channels, teacher_edge_dim)
+            print("e2e_mapping:\n", self.e2e_mapping)
+
         # Borrowed from GemNet.
         self.symmetric_edge_symmetrization = False
 
@@ -497,7 +509,9 @@ class PaiNN(ScaledModule):
             else:
                 return energy
 
-    def extract_features(self, data):
+    def extract_features(self, data_and_graph):
+        data = data_and_graph[0]
+        main_graph = data_and_graph[1]
         pos = data.pos
         batch = data.batch
         z = data.atomic_numbers.long()
@@ -505,13 +519,18 @@ class PaiNN(ScaledModule):
         if self.regress_forces and not self.direct_forces:
             pos = pos.requires_grad_(True)
 
-        (
-            edge_index,
-            neighbors,
-            edge_dist,
-            edge_vector,
-            id_swap,
-        ) = self.generate_graph(data)
+        if main_graph is None:
+            (
+                edge_index,
+                neighbors,
+                edge_dist,
+                edge_vector,
+                id_swap,
+            ) = self.generate_graph(data)
+        else:
+            edge_index = main_graph["edge_index"]
+            edge_dist = main_graph["distance"]
+            edge_vector = -main_graph["vector"]
 
         assert z.dim() == 1 and z.dtype == torch.long
 
@@ -539,10 +558,14 @@ class PaiNN(ScaledModule):
             # x_list.append(x)
             # vec_list.append(x)
         #### Output block #####################################################
+        vec1 = vec[edge_index[0]]
+        vec2 = vec[edge_index[1]]
+        e_feat = (vec1 * vec2).sum(dim=-2)
 
         with torch.cuda.amp.autocast(False):
             x = x.float()
             vec = vec.float()
+            e_feat = e_feat.float()  # using from the latest layer
             per_atom_energy = self.out_energy(x).squeeze(1)
             energy = scatter(per_atom_energy, batch, dim=0)
             if self.regress_forces:
@@ -563,6 +586,7 @@ class PaiNN(ScaledModule):
                     self.n2n_mapping(x),
                     self.n2e_mapping(x),
                     self.v2v_mapping(vec),
+                    self.e2e_mapping(e_feat),
                 ], [energy, forces]
             else:
                 # return [x_list, vec_list], energy

@@ -87,13 +87,13 @@ class OCPDataParallel(torch.nn.DataParallel):
         outputs = self.parallel_apply(replicas, inputs, None)
         return self.gather(outputs, self.output_device)
 
-    def extract_features(self, batch_list):
+    def extract_features(self, batch_list, main_graph=None):
         if self.cpu:
-            return self.module.extract_features(batch_list[0])
+            return self.module.extract_features((batch_list[0], main_graph))
 
         if len(self.device_ids) == 1:
             return self.module.extract_features(
-                batch_list[0].to(f"cuda:{self.device_ids[0]}")
+                (batch_list[0].to(f"cuda:{self.device_ids[0]}"), main_graph)
             )
 
         for t in chain(self.module.parameters(), self.module.buffers()):
@@ -106,7 +106,7 @@ class OCPDataParallel(torch.nn.DataParallel):
                 )
 
         inputs = [
-            batch.to(f"cuda:{self.device_ids[i]}")
+            (batch.to(f"cuda:{self.device_ids[i]}"), main_graph)
             for i, batch in enumerate(batch_list)
         ]
         replicas = self.replicate(

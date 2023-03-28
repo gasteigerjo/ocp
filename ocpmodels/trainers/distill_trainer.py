@@ -533,6 +533,11 @@ class DistillForcesTrainer(BaseTrainer):
             out_batch["out"]["n2e_feature"], out_batch["t_out"]["e2n_feature"]
         )
 
+    def _edge2edge_distill_loss(self, out_batch, batch):
+        return torch.nn.functional.mse_loss(
+            out_batch["out"]["e2e_feature"], out_batch["t_out"]["edge_feature"]
+        )
+
     def _vec2vec_distill_loss(self, out_batch, batch):
         return torch.nn.functional.mse_loss(
             out_batch["out"]["vector_feature"],
@@ -1052,21 +1057,31 @@ class DistillForcesTrainer(BaseTrainer):
     def _distill_forward(self, batch_list, teacher_grad=False):
         # forward pass.
         if self.config["model_attributes"].get("regress_forces", True):
-            [sfnode, sfn2e, sfvec], [
-                out_energy,
-                out_forces,
-            ] = self.model.extract_features(batch_list)
             if not teacher_grad:
                 with torch.no_grad():
-                    [tfnode, tfe2n, tfvec], [
+                    (
+                        [tfnode, tfe2n, tfvec, tfedge],
+                        [
+                            t_out_energy,
+                            t_out_forces,
+                        ],
+                        main_graph,
+                    ) = self.teacher.extract_features(batch_list)
+            else:
+                (
+                    [tfnode, tfe2n, tfvec, tfedge],
+                    [
                         t_out_energy,
                         t_out_forces,
-                    ] = self.teacher.extract_features(batch_list)
-            else:
-                [tfnode, tfe2n, tfvec], [
-                    t_out_energy,
-                    t_out_forces,
-                ] = self.teacher.extract_features(batch_list)
+                    ],
+                    main_graph,
+                ) = self.teacher.extract_features(batch_list)
+            if "edge2edge_distill_loss" not in self.distill_fns:
+                main_graph = None
+            [sfnode, sfn2e, sfvec, sfe2e], [
+                out_energy,
+                out_forces,
+            ] = self.model.extract_features(batch_list, main_graph)
 
         else:
             [sfnode, sfn2e, sfvec], out_energy = self.model.extract_features(
@@ -1093,6 +1108,7 @@ class DistillForcesTrainer(BaseTrainer):
             "node_feature": sfnode,
             "n2e_feature": sfn2e,
             "vector_feature": sfvec,
+            "e2e_feature": sfe2e,
             "energy": out_energy,
         }
 
@@ -1103,6 +1119,7 @@ class DistillForcesTrainer(BaseTrainer):
             "node_feature": tfnode,
             "e2n_feature": tfe2n,
             "vector_feature": tfvec,
+            "edge_feature": tfedge,
             "energy": t_out_energy,
         }
 
