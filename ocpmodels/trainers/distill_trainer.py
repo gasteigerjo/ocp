@@ -1132,7 +1132,7 @@ class DistillForcesTrainer(BaseTrainer):
 
         # loss weighting setup
         weight_per_node, weight_per_sample = self._loss_weights_d1M(
-            batch_list, loss_type="main"
+            batch_list, loss_type="distill"
         )
         # undo squaring in MSE, if MSE is used
         if self.loss_fn["energy"] == "mse":
