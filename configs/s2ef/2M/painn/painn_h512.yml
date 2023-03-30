@@ -1,5 +1,5 @@
 includes:
-  - configs/s2ef/200k/base.yml
+  - configs/s2ef/2M/base.yml
 
 model:
   name: painn

@@ -237,7 +237,7 @@ class BaseTrainer(ABC):
 
             self.logger = registry.get_logger_class(logger_name)(self.config)
 
-    def get_sampler(self, dataset, batch_size, shuffle):
+    def get_sampler(self, dataset, batch_size, shuffle, distill_args=None):
         if "load_balancing" in self.config["optim"]:
             balancing_mode = self.config["optim"]["load_balancing"]
             force_balancing = True
@@ -254,6 +254,7 @@ class BaseTrainer(ABC):
             mode=balancing_mode,
             shuffle=shuffle,
             force_balancing=force_balancing,
+            distill_args=distill_args,
         )
         return sampler
 
@@ -283,6 +284,7 @@ class BaseTrainer(ABC):
                 self.train_dataset,
                 self.config["optim"]["batch_size"],
                 shuffle=True,
+                distill_args=self.config["dataset"],  # TODO: more elegant way?
             )
             self.train_loader = self.get_dataloader(
                 self.train_dataset,

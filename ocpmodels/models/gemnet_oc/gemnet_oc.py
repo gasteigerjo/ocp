@@ -237,6 +237,7 @@ class GemNetOC(ScaledModule):
         scale_basis: bool = False,
         qint_tags: list = [0, 1, 2],
         distill_reduce: str = "sum",
+        distill_final_features: bool = True,
         **kwargs,  # backwards compatibility with deprecated arguments
     ):
         super().__init__()
@@ -248,6 +249,7 @@ class GemNetOC(ScaledModule):
         self.extensive = extensive
 
         self.distill_reduce = distill_reduce
+        self.distill_final_features = distill_final_features
 
         self.atom_edge_interaction = atom_edge_interaction
         self.edge_atom_interaction = edge_atom_interaction
@@ -1393,7 +1395,8 @@ class GemNetOC(ScaledModule):
     def num_params(self):
         return sum(p.numel() for p in self.parameters())
 
-    def extract_features(self, data):
+    def extract_features(self, data_and_graph):
+        data = data_and_graph[0]
         pos = data.pos
         batch = data.batch
         atomic_numbers = data.atomic_numbers.long()
@@ -1476,6 +1479,12 @@ class GemNetOC(ScaledModule):
         x_E = self.out_mlp_E(torch.cat(xs_E, dim=-1))
         if self.direct_forces:
             x_F = self.out_mlp_F(torch.cat(xs_F, dim=-1))
+
+        if self.distill_final_features:
+            features_to_distill = [h, m]
+        else:
+            features_to_distill = [x_E, x_F]
+
         with torch.cuda.amp.autocast(False):
             E_t = self.out_energy(x_E.float())
             if self.direct_forces:
@@ -1492,20 +1501,28 @@ class GemNetOC(ScaledModule):
             )  # (nMolecules, num_targets)
         with torch.cuda.amp.autocast(False):
             m2h = scatter(
-                m.float(),
+                features_to_distill[1].float(),
                 idx_t,
                 dim=0,
                 dim_size=num_atoms,
                 reduce=self.distill_reduce,
             )
             m2v = scatter(
-                m.float().unsqueeze(1) * main_graph["vector"].unsqueeze(-1),
+                features_to_distill[1].float().unsqueeze(1)
+                * main_graph["vector"].unsqueeze(-1),
                 idx_t,
                 dim=0,
                 dim_size=num_atoms,
                 reduce=self.distill_reduce,
             )
 
+        features_to_distill = [
+            features_to_distill[0],
+            m2h,
+            m2v,
+            features_to_distill[1],
+        ]
+        main_graph["id_swap"] = id_swap
         if self.regress_forces:
             if self.direct_forces:
                 if self.forces_coupled:  # enforce F_st = F_ts
@@ -1539,29 +1556,14 @@ class GemNetOC(ScaledModule):
 
             E_t = E_t.squeeze(1)  # (num_molecules)
             F_t = F_t.squeeze(1)  # (num_atoms, 3)
-            # return {
-            #            h, m2h, m2v
-            #        }, \
-            #        [
-            #            E_t,
-            #            F_t,
-            #        ]  # (nMolecules, num_targets), (nAtoms, 3)
-            return {
-                "node_feature": h,
-                "e2n_feature": m2h,
-                "vector_feature": m2v,
-                "energy": E_t,
-                "forces": F_t,
-            }
+            return (
+                features_to_distill,
+                [
+                    E_t,
+                    F_t,
+                ],
+                main_graph,
+            )  # (nMolecules, num_targets), (nAtoms, 3)
         else:
             E_t = E_t.squeeze(1)  # (num_molecules)
-            # return {
-            #            h, m2h, m2v
-            #        }, \
-            #        E_t
-            return {
-                "node_feature": h,
-                "e2n_feature": m2h,
-                "vector_feature": m2v,
-                "energy": E_t,
-            }
+            return features_to_distill, E_t, main_graph

@@ -9,12 +9,12 @@ dataset:
     grad_target_std: 2.887317180633545
   - src: data/s2ef/val_id_sample
 
-amp: True
-
 logger:
   name: wandb
   entity: distill_graph
   project: gemnet-painn
+
+amp: True
 
 task:
   dataset: trajectory_lmdb

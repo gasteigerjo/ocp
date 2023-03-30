@@ -7,13 +7,16 @@ LICENSE file in the root directory of this source tree.
 
 import heapq
 import logging
+import math
 from itertools import chain
+from typing import Iterator, Optional, Sequence
 
 import numba
 import numpy as np
 import torch
+import torch.distributed as dist
 from torch.nn.parallel.distributed import DistributedDataParallel
-from torch.utils.data import BatchSampler, DistributedSampler, Sampler
+from torch.utils.data import BatchSampler, Dataset, DistributedSampler, Sampler
 
 from ocpmodels.common import distutils
 from ocpmodels.datasets import data_list_collater
@@ -84,13 +87,13 @@ class OCPDataParallel(torch.nn.DataParallel):
         outputs = self.parallel_apply(replicas, inputs, None)
         return self.gather(outputs, self.output_device)
 
-    def extract_features(self, batch_list):
+    def extract_features(self, batch_list, main_graph=None):
         if self.cpu:
-            return self.module.extract_features(batch_list[0])
+            return self.module.extract_features((batch_list[0], main_graph))
 
         if len(self.device_ids) == 1:
             return self.module.extract_features(
-                batch_list[0].to(f"cuda:{self.device_ids[0]}")
+                (batch_list[0].to(f"cuda:{self.device_ids[0]}"), main_graph)
             )
 
         for t in chain(self.module.parameters(), self.module.buffers()):
@@ -103,7 +106,7 @@ class OCPDataParallel(torch.nn.DataParallel):
                 )
 
         inputs = [
-            batch.to(f"cuda:{self.device_ids[i]}")
+            (batch.to(f"cuda:{self.device_ids[i]}"), main_graph)
             for i, batch in enumerate(batch_list)
         ]
         replicas = self.replicate(
@@ -165,6 +168,133 @@ def balanced_partition(sizes, num_parts):
     return idx_balanced
 
 
+class DistributedWeightedSampler(Sampler):
+    """
+    Based on these two references
+    https://pytorch.org/docs/stable/_modules/torch/utils/data/distributed.html#DistributedSampler
+    https://pytorch.org/docs/stable/_modules/torch/utils/data/sampler.html#WeightedRandomSampler
+    """
+
+    def __init__(
+        self,
+        dataset: Dataset,
+        weights: Sequence[float],  # has same length as dataset
+        num_replicas: Optional[int] = None,  # total nr. GPUs
+        rank: Optional[int] = None,  # which GPU out of num_replicas
+        seed: int = 0,
+        shuffle: bool = True,
+        drop_last: bool = False,  # duplicates a few samples if needed
+        replacement: bool = True,  # do not change
+    ) -> None:
+
+        assert len(dataset) == len(
+            weights
+        ), "There has to be a weights for each data point"
+        weights_tensor = torch.as_tensor(weights, dtype=torch.double)
+        if len(weights_tensor.shape) != 1:
+            raise ValueError(
+                "weights should be a 1d sequence but given "
+                "weights have shape {}".format(tuple(weights_tensor.shape))
+            )
+
+        self.weights = weights_tensor
+        if num_replicas is None:
+            if not dist.is_available():
+                raise RuntimeError(
+                    "Requires distributed package to be available"
+                )
+            num_replicas = dist.get_world_size()
+        if rank is None:
+            if not dist.is_available():
+                raise RuntimeError(
+                    "Requires distributed package to be available"
+                )
+            rank = dist.get_rank()
+        if rank >= num_replicas or rank < 0:
+            raise ValueError(
+                "Invalid rank {}, rank should be in the interval"
+                " [0, {}]".format(rank, num_replicas - 1)
+            )
+        self.dataset = dataset
+        self.num_replicas = num_replicas
+        self.rank = rank
+        self.epoch = 0
+        self.drop_last = drop_last
+        # If the dataset length is evenly divisible by # of replicas, then there
+        # is no need to drop any data, since the dataset will be split equally.
+        if self.drop_last and len(self.dataset) % self.num_replicas != 0:
+            # Split to nearest available length that is evenly divisible.
+            # This is to ensure each rank receives the same amount of data when
+            # using this Sampler.
+            self.num_samples = math.ceil(
+                (len(self.dataset) - self.num_replicas) / self.num_replicas
+            )
+        else:
+            self.num_samples = math.ceil(len(self.dataset) / self.num_replicas)
+        self.total_size = self.num_samples * self.num_replicas
+        if not isinstance(replacement, bool):
+            raise ValueError(
+                "replacement should be a boolean value, but got "
+                "replacement={}".format(replacement)
+            )
+        self.replacement = replacement
+        self.shuffle = shuffle
+        self.seed = seed
+
+    def __iter__(self) -> Iterator[int]:
+
+        g = torch.Generator()
+        g.manual_seed(self.seed + self.epoch)
+
+        if self.shuffle:
+            # deterministically shuffle based on epoch and seed
+            indices = torch.randperm(len(self.dataset), generator=g).tolist()
+        else:
+            indices = list(range(len(self.dataset)))
+
+        indices = list(range(len(self.dataset)))
+
+        if not self.drop_last:
+            # add extra samples to make it evenly divisible
+            padding_size = self.total_size - len(indices)
+            if padding_size <= len(indices):
+                indices += indices[:padding_size]
+            else:
+                indices += (indices * math.ceil(padding_size / len(indices)))[
+                    :padding_size
+                ]
+        else:
+            # remove tail of data to make it evenly divisible.
+            indices = indices[: self.total_size]
+        assert len(indices) == self.total_size
+
+        # subsample
+        indices = indices[self.rank : self.total_size : self.num_replicas]
+        assert len(indices) == self.num_samples
+
+        # subsample weights
+        weights = self.weights[indices]
+
+        rand_tensor = torch.multinomial(
+            input=weights,
+            num_samples=len(weights),
+            replacement=self.replacement,
+            generator=g,
+        )
+
+        weighted_sample_indices = torch.tensor(indices)[rand_tensor].tolist()
+        # the following line returns the origin labels
+        # sample_weights = weights[rand_tensor].tolist()
+
+        return iter(weighted_sample_indices)
+
+    def __len__(self) -> int:
+        return self.num_samples
+
+    def set_epoch(self, epoch: int) -> None:
+        self.epoch = epoch
+
+
 class BalancedBatchSampler(Sampler):
     def __init__(
         self,
@@ -177,6 +307,7 @@ class BalancedBatchSampler(Sampler):
         shuffle=True,
         drop_last=False,
         force_balancing=False,
+        distill_args=None,
     ):
         self.dataset = dataset
         self.batch_size = batch_size
@@ -221,13 +352,39 @@ class BalancedBatchSampler(Sampler):
         else:
             self.sizes = None
 
-        self.single_sampler = DistributedSampler(
-            dataset,
-            num_replicas=num_replicas,
-            rank=rank,
-            shuffle=shuffle,
-            drop_last=drop_last,
-        )
+        if distill_args and ("target_ratio_synthetic" in distill_args):
+            assert hasattr(dataset, "metadata_path"), "No metadata path found"
+            assert dataset.metadata_path.is_file(), "Metadata is not a file"
+            assert "origin" in np.load(
+                dataset.metadata_path
+            ), "Metadata lacks 'origin'. Run srcipts/merge_datasets.py"
+
+            mask_origin = np.load(dataset.metadata_path)["origin"]
+            trs = distill_args["target_ratio_synthetic"]
+            # dataset_ratio_synthetic. Label=1 marks synthetic data
+            drs = (mask_origin == 1).mean()
+
+            # caution: these probabilities do not need to sum up to one
+            prob_synthetic = trs / drs
+            prob_dft = (1 - trs) / (1 - drs)
+            weights = np.where(mask_origin == 1, prob_synthetic, prob_dft)
+
+            self.single_sampler = DistributedWeightedSampler(
+                dataset,
+                weights=weights,
+                num_replicas=num_replicas,
+                rank=rank,
+                shuffle=shuffle,
+                drop_last=drop_last,
+            )
+        else:
+            self.single_sampler = DistributedSampler(
+                dataset,
+                num_replicas=num_replicas,
+                rank=rank,
+                shuffle=shuffle,
+                drop_last=drop_last,
+            )
         self.batch_sampler = BatchSampler(
             self.single_sampler,
             batch_size,

@@ -23,6 +23,7 @@ DOWNLOAD_LINKS = {
         "test": "https://dl.fbaipublicfiles.com/opencatalystproject/data/s2ef_test_lmdbs.tar.gz",
         "rattled": "https://dl.fbaipublicfiles.com/opencatalystproject/data/s2ef_rattled.tar",
         "md": "https://dl.fbaipublicfiles.com/opencatalystproject/data/s2ef_md.tar",
+        "d1M": "https://sandbox.zenodo.org/record/1126288/files/s2ef_train_d1M.tar",
     },
     "is2re": "https://dl.fbaipublicfiles.com/opencatalystproject/data/is2res_train_val_test_lmdbs.tar.gz",
 }
@@ -39,6 +40,7 @@ S2EF_COUNTS = {
         "val_ood_both": 999944,
         "rattled": 16677031,
         "md": 38315405,
+        "d1M": 1000000,
     },
 }
 
@@ -68,7 +70,7 @@ def get_data(datadir, task, split, del_intmd_files):
     )
     if task == "s2ef" and split != "test":
         compressed_dir = os.path.join(dirname, os.path.basename(dirname))
-        if split in ["200k", "2M", "20M", "all", "rattled", "md"]:
+        if split in ["200k", "2M", "20M", "all", "rattled", "md", "d1M"]:
             output_path = os.path.join(datadir, task, split, "train")
         else:
             output_path = os.path.join(datadir, task, "all", split)
