@@ -164,6 +164,7 @@ class SchNetWrap(SchNet):
             return energy
 
     def extract_features(self, data):
+        data = data[0]
         if self.regress_forces:
             data.pos.requires_grad_(True)
 
@@ -278,19 +279,23 @@ class SchNetWrap(SchNet):
                 )[0]
             )
             with torch.cuda.amp.autocast(False):
-                return {
-                    "node_feature": self.n2n_mapping(h_.float()),
-                    "n2e_feature": self.n2e_mapping(h_.float()),
-                    "energy": energy,
-                    "forces": forces,
-                }
+                return [
+                    self.n2n_mapping(h_.float()),
+                    self.n2e_mapping(h_.float()),
+                    None,
+                    None,
+                ], [
+                    energy.squeeze(),
+                    forces,
+                ]  # TODO: is squeeze here correct?
         else:
             with torch.cuda.amp.autocast(False):
-                return {
-                    "node_feature": self.n2n_mapping(h_.float()),
-                    "n2e_feature": self.n2e_mapping(h_.float()),
-                    "energy": energy,
-                }
+                return [
+                    self.n2n_mapping(h_.float()),
+                    self.n2e_mapping(h_.float()),
+                    None,
+                    None,
+                ], energy.squeeze()
 
     @property
     def num_params(self):
