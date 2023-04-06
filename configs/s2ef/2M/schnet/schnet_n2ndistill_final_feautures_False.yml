@@ -1,0 +1,8 @@
+includes:
+  - configs/s2ef/2M/schnet/schnet_base_distill.yml
+distillation:
+  distill_loss: node2node_distill_loss
+  distill_lambda: 100.0
+
+teacher_model:
+  distill_final_features: False
