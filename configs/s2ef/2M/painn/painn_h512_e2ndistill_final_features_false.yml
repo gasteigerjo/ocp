@@ -1,0 +1,8 @@
+includes:
+  - configs/s2ef/2M/painn/painn_base_distill.yml
+distillation:
+  distill_loss: edge2node_distill_loss
+  distill_lambda: 10.0
+
+teacher_model:
+  distill_final_features: False

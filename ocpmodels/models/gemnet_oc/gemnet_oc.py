@@ -237,7 +237,7 @@ class GemNetOC(ScaledModule):
         scale_basis: bool = False,
         qint_tags: list = [0, 1, 2],
         distill_reduce: str = "sum",
-        distill_final_features: bool = True,
+        distill_layer_code: str = "concatmlp",
         **kwargs,  # backwards compatibility with deprecated arguments
     ):
         super().__init__()
@@ -249,7 +249,22 @@ class GemNetOC(ScaledModule):
         self.extensive = extensive
 
         self.distill_reduce = distill_reduce
-        self.distill_final_features = distill_final_features
+        if distill_layer_code.lower() == "concatmlp":
+            self.distill_layer_num = num_blocks + 2
+            self.distill_layer_type = None
+        else:
+            (
+                self.distill_layer_type,
+                self.distill_layer_num,
+            ) = distill_layer_code.split("_")
+            self.distill_layer_type = self.distill_layer_type.lower()
+            assert self.distill_layer_type in [
+                "regular",
+                "x",
+            ], f"Unknown distill layer type: {self.distill_layer_type}"
+            self.distill_layer_num = int(self.distill_layer_num)
+
+        # self.distill_final_features = distill_final_features
 
         self.atom_edge_interaction = atom_edge_interaction
         self.edge_atom_interaction = edge_atom_interaction
@@ -1438,14 +1453,18 @@ class GemNetOC(ScaledModule):
             quad_idx=quad_idx,
             num_atoms=num_atoms,
         )
-
+        features_to_distill = None
         # Embedding block
         h = self.atom_emb(atomic_numbers)
         # (nAtoms, emb_size_atom)
         m = self.edge_emb(h, basis_rad_raw, main_graph["edge_index"])
         # (nEdges, emb_size_edge)
-
         x_E, x_F = self.out_blocks[0](h, m, basis_output, idx_t)
+        if self.distill_layer_num == 0:
+            if self.distill_layer_type == "regular":
+                features_to_distill = [h, m]
+            else:
+                features_to_distill = [x_E, x_F]
         # (nAtoms, emb_size_atom), (nEdges, emb_size_edge)
         xs_E, xs_F = [x_E], [x_F]
 
@@ -1471,6 +1490,11 @@ class GemNetOC(ScaledModule):
             )  # (nAtoms, emb_size_atom), (nEdges, emb_size_edge)
 
             x_E, x_F = self.out_blocks[i + 1](h, m, basis_output, idx_t)
+            if self.distill_layer_num == (i + 1):
+                if self.distill_layer_type == "regular":
+                    features_to_distill = [h, m]
+                else:
+                    features_to_distill = [x_E, x_F]
             # (nAtoms, emb_size_atom), (nEdges, emb_size_edge)
             xs_E.append(x_E)
             xs_F.append(x_F)
@@ -1480,10 +1504,13 @@ class GemNetOC(ScaledModule):
         if self.direct_forces:
             x_F = self.out_mlp_F(torch.cat(xs_F, dim=-1))
 
-        if self.distill_final_features:
-            features_to_distill = [h, m]
-        else:
+        if features_to_distill is None:
             features_to_distill = [x_E, x_F]
+
+        # if self.distill_final_features:
+        #    features_to_distill = [h, m]
+        # else:
+        #    features_to_distill = [x_E, x_F]
 
         with torch.cuda.amp.autocast(False):
             E_t = self.out_energy(x_E.float())
