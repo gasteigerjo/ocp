@@ -1078,10 +1078,14 @@ class DistillForcesTrainer(BaseTrainer):
                 ) = self.teacher.extract_features(batch_list)
             if "edge2edge_distill_loss" not in self.distill_fns:
                 main_graph = None
-            [sfnode, sfn2e, sfvec, sfe2e], [
-                out_energy,
-                out_forces,
-            ] = self.model.extract_features(batch_list, main_graph)
+            (
+                [sfnode, sfn2e, sfvec, sfe2e],
+                [
+                    out_energy,
+                    out_forces,
+                ],
+                _,
+            ) = self.model.extract_features(batch_list, main_graph)
 
         else:
             [sfnode, sfn2e, sfvec], out_energy = self.model.extract_features(

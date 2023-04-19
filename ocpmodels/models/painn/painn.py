@@ -604,12 +604,16 @@ class PaiNN(ScaledModule):
                         )[0]
                     )
                 # return [x_list, vec_list], [energy, forces]
-                return [
-                    self.n2n_mapping(node_feat.float()),
-                    self.n2e_mapping(node_feat.float()),
-                    self.v2v_mapping(vec),
-                    self.e2e_mapping(e_feat),
-                ], [energy, forces]
+                return (
+                    [
+                        self.n2n_mapping(node_feat.float()),
+                        self.n2e_mapping(node_feat.float()),
+                        self.v2v_mapping(vec),
+                        self.e2e_mapping(e_feat),
+                    ],
+                    [energy, forces],
+                    main_graph,
+                )
             else:
                 # return [x_list, vec_list], energy
                 return [
