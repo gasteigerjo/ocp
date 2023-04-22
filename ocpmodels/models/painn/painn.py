@@ -84,6 +84,7 @@ class PaiNN(ScaledModule):
         use_distill=False,
         projection_head=False,
         id_mapping=False,
+        distill_layer_code="U6",
         **kwargs,
     ):
         super(PaiNN, self).__init__()
@@ -144,6 +145,19 @@ class PaiNN(ScaledModule):
             else:
                 self.e2e_mapping = nn.Linear(hidden_channels, teacher_edge_dim)
             print("e2e_mapping:\n", self.e2e_mapping)
+
+            self.distill_layer_type = distill_layer_code[0].lower()
+            assert self.distill_layer_type in [
+                "m",
+                "u",
+            ], "Distill layer type in Painn not m or u"
+            self.distill_layer_num = int(distill_layer_code[1:])
+            assert (
+                self.distill_layer_num <= num_layers
+            ), "Distill layer number in Painn is larger than num_layers"
+            assert (
+                self.distill_layer_num > 0
+            ), "Distill layer number is Painn is less than 1"
 
         # Borrowed from GemNet.
         self.symmetric_edge_symmetrization = False
@@ -549,12 +563,20 @@ class PaiNN(ScaledModule):
             x = x + dx
             vec = vec + dvec
             x = x * self.inv_sqrt_2
+            if self.distill_layer_type == "m" and self.distill_layer_num == (
+                i + 1
+            ):
+                node_feat = x.clone()
 
             dx, dvec = self.update_layers[i](x, vec)
 
             x = x + dx
             vec = vec + dvec
             x = getattr(self, "upd_out_scalar_scale_%d" % i)(x)
+            if self.distill_layer_type == "u" and self.distill_layer_num == (
+                i + 1
+            ):
+                node_feat = x.clone()
             # x_list.append(x)
             # vec_list.append(x)
         #### Output block #####################################################
@@ -582,25 +604,23 @@ class PaiNN(ScaledModule):
                         )[0]
                     )
                 # return [x_list, vec_list], [energy, forces]
-                return [
-                    self.n2n_mapping(x),
-                    self.n2e_mapping(x),
-                    self.v2v_mapping(vec),
-                    self.e2e_mapping(e_feat),
-                ], [energy, forces]
+                return (
+                    [
+                        self.n2n_mapping(node_feat.float()),
+                        self.n2e_mapping(node_feat.float()),
+                        self.v2v_mapping(vec),
+                        self.e2e_mapping(e_feat),
+                    ],
+                    [energy, forces],
+                    main_graph,
+                )
             else:
                 # return [x_list, vec_list], energy
-                # return [
-                #     self.n2n_mapping(x),
-                #     self.n2e_mapping(x),
-                #     self.v2v_mapping(vec),
-                # ], energy
-                return {
-                    "node_feature": self.n2n_mapping(x),
-                    "n2e_feature": self.n2e_mapping(x),
-                    "vector_feature": self.v2v_mapping(vec),
-                    "energy": energy,
-                }
+                return [
+                    self.n2n_mapping(node_feat.float()),
+                    self.n2e_mapping(node_feat.float()),
+                    self.v2v_mapping(vec),
+                ], energy
 
     @property
     def num_params(self):
