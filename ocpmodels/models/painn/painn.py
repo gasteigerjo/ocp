@@ -102,62 +102,87 @@ class PaiNN(ScaledModule):
 
         # TODO: for distillation
         if use_distill:
+            distill_layers = [
+                code.lower() for code in distill_layer_code.split("_")
+            ]
+            distill_layers = [
+                (code[0], int(code[1:])) for code in distill_layers
+            ]
+            distill_layers = sorted(
+                distill_layers, key=lambda tup: (tup[1], tup[0])
+            )  # Sort primarly on layer number, then on m/u
+            assert all(
+                code[1] > 0 for code in distill_layers
+            ), "Distill layer number in Painn is less than 1"
+            assert all(
+                code[1] <= num_layers for code in distill_layers
+            ), "Distill layer number in Painn is large than num_layers"
+            assert all(
+                code[0] in ["m", "u"] for code in distill_layers
+            ), "Distill layer type in Painn not m nor u"
+            self.distill_layers = distill_layers
+            self.num_distill_layers = len(self.distill_layers)
+
             if projection_head:
                 self.n2n_mapping = nn.Sequential(
-                    nn.Linear(hidden_channels, 2 * hidden_channels),
+                    nn.Linear(
+                        self.num_distill_layers * hidden_channels,
+                        2 * hidden_channels,
+                    ),
                     nn.ReLU(),
                     nn.Linear(2 * hidden_channels, teacher_node_dim),
                 )
             elif id_mapping:
                 self.n2n_mapping = nn.Identity()
             else:
-                self.n2n_mapping = nn.Linear(hidden_channels, teacher_node_dim)
+                self.n2n_mapping = nn.Linear(
+                    self.num_distill_layers * hidden_channels, teacher_node_dim
+                )
             print("n2n_mapping:\n", self.n2n_mapping)
 
             if id_mapping:
                 self.v2v_mapping = nn.Identity()
             else:
                 self.v2v_mapping = nn.Linear(
-                    hidden_channels, teacher_edge_dim, bias=False
+                    self.num_distill_layers * hidden_channels,
+                    teacher_edge_dim,
+                    bias=False,
                 )
             print("v2v_mapping:\n", self.v2v_mapping)
 
             if projection_head:
                 self.n2e_mapping = nn.Sequential(
-                    nn.Linear(hidden_channels, 2 * hidden_channels),
+                    nn.Linear(
+                        self.num_distill_layers * hidden_channels,
+                        2 * hidden_channels,
+                    ),
                     nn.ReLU(),
                     nn.Linear(2 * hidden_channels, teacher_edge_dim),
                 )
             elif id_mapping:
                 self.n2e_mapping = nn.Identity()
             else:
-                self.n2e_mapping = nn.Linear(hidden_channels, teacher_edge_dim)
+                self.n2e_mapping = nn.Linear(
+                    self.num_distill_layers * hidden_channels, teacher_edge_dim
+                )
             print("n2e_mapping:\n", self.n2e_mapping)
 
             if projection_head:
                 self.e2e_mapping = nn.Sequential(
-                    nn.Linear(hidden_channels, 2 * hidden_channels),
+                    nn.Linear(
+                        self.num_distill_layers * hidden_channels,
+                        2 * hidden_channels,
+                    ),
                     nn.ReLU(),
                     nn.Linear(2 * hidden_channels, teacher_edge_dim),
                 )
             elif id_mapping:
                 self.e2e_mapping = nn.Identity()
             else:
-                self.e2e_mapping = nn.Linear(hidden_channels, teacher_edge_dim)
+                self.e2e_mapping = nn.Linear(
+                    self.num_distill_layers * hidden_channels, teacher_edge_dim
+                )
             print("e2e_mapping:\n", self.e2e_mapping)
-
-            self.distill_layer_type = distill_layer_code[0].lower()
-            assert self.distill_layer_type in [
-                "m",
-                "u",
-            ], "Distill layer type in Painn not m or u"
-            self.distill_layer_num = int(distill_layer_code[1:])
-            assert (
-                self.distill_layer_num <= num_layers
-            ), "Distill layer number in Painn is larger than num_layers"
-            assert (
-                self.distill_layer_num > 0
-            ), "Distill layer number is Painn is less than 1"
 
         # Borrowed from GemNet.
         self.symmetric_edge_symmetrization = False
@@ -554,7 +579,9 @@ class PaiNN(ScaledModule):
         vec = torch.zeros(x.size(0), 3, x.size(1), device=x.device)
 
         #### Interaction blocks ###############################################
-        # x_list, vec_list = [], []
+        x_list, vec_list = [], []
+        distill_layers_iter = iter(self.distill_layers)
+        distill_layer = next(distill_layers_iter, (None, None))
         for i in range(self.num_layers):
             dx, dvec = self.message_layers[i](
                 x, vec, edge_index, edge_rbf, edge_vector
@@ -563,25 +590,26 @@ class PaiNN(ScaledModule):
             x = x + dx
             vec = vec + dvec
             x = x * self.inv_sqrt_2
-            if self.distill_layer_type == "m" and self.distill_layer_num == (
-                i + 1
-            ):
-                node_feat = x.clone()
+            if distill_layer == ("m", i + 1):
+                x_list.append(x.clone())
+                vec_list.append(vec.clone())
+                distill_layer = next(distill_layers_iter, (None, None))
 
             dx, dvec = self.update_layers[i](x, vec)
 
             x = x + dx
             vec = vec + dvec
             x = getattr(self, "upd_out_scalar_scale_%d" % i)(x)
-            if self.distill_layer_type == "u" and self.distill_layer_num == (
-                i + 1
-            ):
-                node_feat = x.clone()
-            # x_list.append(x)
-            # vec_list.append(x)
+            if distill_layer == ("u", i + 1):
+                x_list.append(x.clone())
+                vec_list.append(vec.clone())
+                distill_layer = next(distill_layers_iter, (None, None))
+        assert distill_layer == (None, None)
+        node_feat = torch.hstack(x_list)
+        vec_feat = torch.cat(vec_list, dim=-1)
         #### Output block #####################################################
-        vec1 = vec[edge_index[0]]
-        vec2 = vec[edge_index[1]]
+        vec1 = vec_feat[edge_index[0]]
+        vec2 = vec_feat[edge_index[1]]
         e_feat = (vec1 * vec2).sum(dim=-2)
 
         with torch.cuda.amp.autocast(False):
@@ -607,7 +635,7 @@ class PaiNN(ScaledModule):
                 return [
                     self.n2n_mapping(node_feat.float()),
                     self.n2e_mapping(node_feat.float()),
-                    self.v2v_mapping(vec),
+                    self.v2v_mapping(vec_feat.float()),
                     self.e2e_mapping(e_feat),
                 ], [energy, forces]
             else:
@@ -615,7 +643,7 @@ class PaiNN(ScaledModule):
                 return [
                     self.n2n_mapping(node_feat.float()),
                     self.n2e_mapping(node_feat.float()),
-                    self.v2v_mapping(vec),
+                    self.v2v_mapping(vec_feat.float()),
                 ], energy
 
     @property
