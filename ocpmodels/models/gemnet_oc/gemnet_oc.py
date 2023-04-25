@@ -1542,13 +1542,13 @@ class GemNetOC(ScaledModule):
                 dim_size=num_atoms,
                 reduce=self.distill_reduce,
             )
-
-        features_to_distill = [
-            features_to_distill[0],
-            m2h,
-            m2v,
-            features_to_distill[1],
-        ]
+        with torch.cuda.amp.autocast(False):
+            features_to_distill = [
+                features_to_distill[0].float(),
+                m2h.float(),
+                m2v.float(),
+                features_to_distill[1].float(),
+            ]
         main_graph["id_swap"] = id_swap
         if self.regress_forces:
             if self.direct_forces:

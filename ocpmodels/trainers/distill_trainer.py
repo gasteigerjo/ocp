@@ -16,10 +16,10 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 import torch_geometric
-import wandb
 from torch_scatter import scatter
 from tqdm import tqdm
 
+import wandb
 from ocpmodels.common import distutils
 from ocpmodels.common.data_parallel import (
     BalancedBatchSampler,
@@ -43,6 +43,55 @@ def vector_projection(vec1, vec2):
         vec1.unsqueeze(-2), vec2_normalized.unsqueeze(-1)
     ).squeeze(-1)
     return coef * vec2_normalized
+
+
+def get_h(n):
+    return torch.eye(n) - 1 / n * torch.ones((n, n))
+
+
+def center_matrix(M):
+    n = M.shape[0]
+    H = get_h(n).to(device=M.device)
+    return torch.mm(H, torch.mm(M, H))
+
+
+def gram_matrix(M):
+    return torch.mm(M, M.t())
+
+
+def hsic_given_centered(K_prime, L_prime):
+    m = K_prime.shape[0]
+    K_vec = K_prime.flatten().unsqueeze(-1)
+    L_vec = L_prime.flatten().unsqueeze(-1)
+    return (torch.mm(K_vec.t(), L_vec) / ((m - 1) ** 2)).squeeze()
+
+
+def hsic(K, L):
+    assert L.shape[0] == K.shape[0], "K and L have non-conforming sizes"
+    K_prime = center_matrix(K)
+    L_prime = center_matrix(L)
+    return hsic_given_centered(K_prime, L_prime)
+
+
+def cka(X, Y):
+    """
+    X: batch of features of shape BxD1
+    Y: batch of features of shape BxD2
+    """
+    assert len(X.shape) == 2, "X matrix not correct shape"
+    assert len(Y.shape) == 2, "Y matrix not correct shape"
+    assert Y.shape[0] == X.shape[0], "X and Y doesn't have same batch size"
+    with torch.cuda.amp.autocast(False):
+        K = gram_matrix(X)
+        L = gram_matrix(Y)
+
+        # Center matrix here to avoid doing it multiple times
+        K_prime = center_matrix(K)
+        L_prime = center_matrix(L)
+        kl = hsic_given_centered(K_prime, L_prime)
+        kk = hsic_given_centered(K_prime, K_prime)
+        ll = hsic_given_centered(L_prime, L_prime)
+        return kl / torch.sqrt(kk * ll)
 
 
 @registry.register_trainer("distill")
@@ -507,6 +556,13 @@ class DistillForcesTrainer(BaseTrainer):
         loss = scatter(dist, index1, dim=0, reduce="mean")
         loss = scatter(loss, batch_list[0].batch, dim=0, reduce="mean")
         return torch.mean(loss)
+
+    def _node_cka_distill_loss(self, out_batch, batch):
+        cka_loss = 1 - cka(
+            out_batch["out"]["node_feature"],
+            out_batch["t_out"]["node_feature"],
+        )
+        return cka_loss
 
     def _node_global_preservation_distill_loss(self, out_batch, batch):
         return self._global_preservation(
