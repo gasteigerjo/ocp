@@ -1,0 +1,6 @@
+includes:
+  - configs/s2ef/2M/painn/painn_base_distill.yml
+distillation:
+  distill_loss: regular
+  force_coefficient: 100.0
+  energy_coefficient: 1.0

@@ -959,10 +959,22 @@ class DistillForcesTrainer(BaseTrainer):
                     loss = self._compute_loss(out_batch["out"], batch)
                     distill_loss = []
                     for loss_idx, loss_type in enumerate(self.distill_fns):
-                        distill_loss.append(
-                            getattr(self, "_" + loss_type)(out_batch, batch)
-                            * self.distill_lambda[loss_idx]
-                        )
+                        if loss_type == "regular":
+                            distill_loss.append(
+                                self._compute_loss_distill(
+                                    out_batch["out"],
+                                    batch,
+                                    out_batch["t_out"],
+                                )
+                                * self.distill_lambda[loss_idx]
+                            )
+                        else:
+                            distill_loss.append(
+                                getattr(self, "_" + loss_type)(
+                                    out_batch, batch
+                                )
+                                * self.distill_lambda[loss_idx]
+                            )
                     loss += sum(distill_loss)
 
                 loss = self.scaler.scale(loss) if self.scaler else loss
