@@ -296,6 +296,7 @@ class DistillForcesTrainer(BaseTrainer):
                 self.adversarial_distill_lambda = self.config["distillation"][
                     "adversarial_distill_lambda"
                 ]
+        self.use_mae = self.config["distillation"].get("use_mae", False)
 
     def load_task(self):
         logging.info(f"Loading dataset: {self.config['task']['dataset']}")
@@ -579,15 +580,28 @@ class DistillForcesTrainer(BaseTrainer):
         )
 
     def _node2node_distill_loss(self, out_batch, batch):
-        return torch.nn.functional.mse_loss(
-            out_batch["out"]["node_feature"],
-            out_batch["t_out"]["node_feature"],
-        )
+        if self.use_mae:
+            return torch.nn.functional.l1_loss(
+                out_batch["out"]["node_feature"],
+                out_batch["t_out"]["node_feature"],
+            )
+        else:
+            return torch.nn.functional.mse_loss(
+                out_batch["out"]["node_feature"],
+                out_batch["t_out"]["node_feature"],
+            )
 
     def _edge2node_distill_loss(self, out_batch, batch):
-        return torch.nn.functional.mse_loss(
-            out_batch["out"]["n2e_feature"], out_batch["t_out"]["e2n_feature"]
-        )
+        if self.use_mae:
+            return torch.nn.functional.l1_loss(
+                out_batch["out"]["n2e_feature"],
+                out_batch["t_out"]["e2n_feature"],
+            )
+        else:
+            return torch.nn.functional.mse_loss(
+                out_batch["out"]["n2e_feature"],
+                out_batch["t_out"]["e2n_feature"],
+            )
 
     def _edge2edge_distill_loss(self, out_batch, batch):
         return torch.nn.functional.mse_loss(
