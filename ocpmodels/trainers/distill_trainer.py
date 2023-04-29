@@ -297,6 +297,8 @@ class DistillForcesTrainer(BaseTrainer):
                     "adversarial_distill_lambda"
                 ]
         self.use_mae = self.config["distillation"].get("use_mae", False)
+        self.use_huber = self.config["distillation"].get("use_huber", False)
+        self.huber_delta = self.config["distillation"].get("huber_delta", 1.0)
 
     def load_task(self):
         logging.info(f"Loading dataset: {self.config['task']['dataset']}")
@@ -585,6 +587,12 @@ class DistillForcesTrainer(BaseTrainer):
                 out_batch["out"]["node_feature"],
                 out_batch["t_out"]["node_feature"],
             )
+        elif self.use_huber:
+            return torch.nn.functional.huber_loss(
+                out_batch["out"]["node_feature"],
+                out_batch["t_out"]["node_feature"],
+                delta=self.huber_delta
+            )
         else:
             return torch.nn.functional.mse_loss(
                 out_batch["out"]["node_feature"],
@@ -596,6 +604,12 @@ class DistillForcesTrainer(BaseTrainer):
             return torch.nn.functional.l1_loss(
                 out_batch["out"]["n2e_feature"],
                 out_batch["t_out"]["e2n_feature"],
+            )
+        elif self.use_huber:
+            return torch.nn.functional.huber_loss(
+                out_batch["out"]["n2e_feature"],
+                out_batch["t_out"]["e2n_feature"],
+                delta=self.huber_delta
             )
         else:
             return torch.nn.functional.mse_loss(
