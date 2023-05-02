@@ -279,15 +279,19 @@ class SchNetWrap(SchNet):
                 )[0]
             )
             with torch.cuda.amp.autocast(False):
-                return [
-                    self.n2n_mapping(h_.float()),
-                    self.n2e_mapping(h_.float()),
+                return (
+                    [
+                        self.n2n_mapping(h_.float()),
+                        self.n2e_mapping(h_.float()),
+                        None,
+                        None,
+                    ],
+                    [
+                        energy.squeeze(),
+                        forces,
+                    ],
                     None,
-                    None,
-                ], [
-                    energy.squeeze(),
-                    forces,
-                ]  # TODO: is squeeze here correct?
+                )  # TODO: is squeeze here correct?
         else:
             with torch.cuda.amp.autocast(False):
                 return [
