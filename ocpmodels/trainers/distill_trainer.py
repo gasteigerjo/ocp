@@ -16,10 +16,10 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 import torch_geometric
-import wandb
 from torch_scatter import scatter
 from tqdm import tqdm
 
+import wandb
 from ocpmodels.common import distutils
 from ocpmodels.common.data_parallel import (
     BalancedBatchSampler,
@@ -903,8 +903,6 @@ class DistillForcesTrainer(BaseTrainer):
                     out_batch = self._distill_forward(batch)
                     loss = self._compute_loss(out_batch["out"], batch)
                     distill_loss = []
-                    if batch[0].pos.requires_grad:
-                        batch = [b.clone() for b in batch]
                     for loss_idx, loss_type in enumerate(self.distill_fns):
                         distill_loss.append(
                             getattr(self, "_" + loss_type)(out_batch, batch)
