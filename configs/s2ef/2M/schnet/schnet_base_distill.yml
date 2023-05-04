@@ -7,9 +7,9 @@ model:
   otf_graph: True
 
 optim:
-  batch_size: 32
-  eval_batch_size: 32
-  eval_every: 12500 # on the 2M dataset with bs=32 this leads to 5 evals/epoch
+  batch_size: 64
+  eval_batch_size: 64
+  # eval_every: 12500 # on the 2M dataset with bs=32 this leads to 5 evals/epoch
 
 teacher_path: pretrained/gemnet_oc_base_s2ef_2M.pt
 teacher_model:
