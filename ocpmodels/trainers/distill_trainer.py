@@ -591,7 +591,7 @@ class DistillForcesTrainer(BaseTrainer):
             return torch.nn.functional.huber_loss(
                 out_batch["out"]["node_feature"],
                 out_batch["t_out"]["node_feature"],
-                delta=self.huber_delta
+                delta=self.huber_delta,
             )
         else:
             return torch.nn.functional.mse_loss(
@@ -609,7 +609,7 @@ class DistillForcesTrainer(BaseTrainer):
             return torch.nn.functional.huber_loss(
                 out_batch["out"]["n2e_feature"],
                 out_batch["t_out"]["e2n_feature"],
-                delta=self.huber_delta
+                delta=self.huber_delta,
             )
         else:
             return torch.nn.functional.mse_loss(
@@ -620,6 +620,12 @@ class DistillForcesTrainer(BaseTrainer):
     def _edge2edge_distill_loss(self, out_batch, batch):
         return torch.nn.functional.mse_loss(
             out_batch["out"]["e2e_feature"], out_batch["t_out"]["edge_feature"]
+        )
+
+    def _per_atom_energy_distill_loss(self, out_batch, batch):
+        return self.loss_fn["energy"](
+            out_batch["out"]["per_atom_energy"],
+            out_batch["t_out"]["per_atom_energy"],
         )
 
     def _vec2vec_distill_loss(self, out_batch, batch):
@@ -1157,19 +1163,13 @@ class DistillForcesTrainer(BaseTrainer):
                 with torch.no_grad():
                     (
                         [tfnode, tfe2n, tfvec, tfedge],
-                        [
-                            t_out_energy,
-                            t_out_forces,
-                        ],
+                        [t_out_energy, t_out_forces, t_out_per_atom_energy],
                         main_graph,
                     ) = self.teacher.extract_features(batch_list)
             else:
                 (
                     [tfnode, tfe2n, tfvec, tfedge],
-                    [
-                        t_out_energy,
-                        t_out_forces,
-                    ],
+                    [t_out_energy, t_out_forces, t_out_per_atom_energy],
                     main_graph,
                 ) = self.teacher.extract_features(batch_list)
             if "edge2edge_distill_loss" not in self.distill_fns:
@@ -1179,6 +1179,7 @@ class DistillForcesTrainer(BaseTrainer):
                 [
                     out_energy,
                     out_forces,
+                    out_per_atom_energy,
                 ],
                 _,
             ) = self.model.extract_features(batch_list, main_graph)
@@ -1210,6 +1211,7 @@ class DistillForcesTrainer(BaseTrainer):
             "vector_feature": sfvec,
             "e2e_feature": sfe2e,
             "energy": out_energy,
+            "per_atom_energy": out_per_atom_energy,
         }
 
         if self.config["model_attributes"].get("regress_forces", True):
@@ -1221,6 +1223,7 @@ class DistillForcesTrainer(BaseTrainer):
             "vector_feature": tfvec,
             "edge_feature": tfedge,
             "energy": t_out_energy,
+            "per_atom_energy": t_out_per_atom_energy,
         }
 
         if self.config["teacher_model_attributes"].get("regress_forces", True):

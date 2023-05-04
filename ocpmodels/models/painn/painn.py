@@ -85,6 +85,7 @@ class PaiNN(ScaledModule):
         projection_head=False,
         id_mapping=False,
         distill_layer_code="U6",
+        force_linear_n2n=False,
         **kwargs,
     ):
         super(PaiNN, self).__init__()
@@ -132,7 +133,7 @@ class PaiNN(ScaledModule):
                     nn.ReLU(),
                     nn.Linear(2 * hidden_channels, teacher_node_dim),
                 )
-            elif id_mapping:
+            elif id_mapping and not force_linear_n2n:
                 self.n2n_mapping = nn.Identity()
             else:
                 self.n2n_mapping = nn.Linear(
@@ -639,7 +640,7 @@ class PaiNN(ScaledModule):
                         self.v2v_mapping(vec_feat.float()),
                         self.e2e_mapping(e_feat),
                     ],
-                    [energy, forces],
+                    [energy, forces, per_atom_energy],
                     main_graph,
                 )
             else:
