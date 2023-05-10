@@ -1,0 +1,28 @@
+dataset:
+  - src: data/s2ef/coll/train # 120k samples
+    normalize_labels: True
+    target_mean: -6288.368188706492
+    target_std: 1 #2921.369376026417
+    grad_target_mean: 0.0
+    grad_target_std: 1
+  - src: data/s2ef/coll/val # 10k samples
+
+logger:
+  name: wandb
+  entity: distill_graph
+  project: coll
+
+# amp: True
+
+task:
+  dataset: trajectory_lmdb
+  description: "Regressing to energies and forces for DFT trajectories from OCP"
+  type: regression
+  metric: mae
+  labels:
+    - potential energy
+  grad_input: atomic forces
+  train_on_free_atoms: True
+  eval_on_free_atoms: True
+
+trainer: forces

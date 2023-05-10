@@ -1,0 +1,30 @@
+includes:
+  - configs/s2ef/coll/schnet/schnet.yml
+trainer: distill
+
+model:
+  use_distill: True
+  otf_graph: True
+  teacher_node_dim: 512
+  teacher_edge_dim: 512
+
+optim:
+  batch_size: 32
+  eval_batch_size: 32
+
+teacher_path: checkpoints/2023-05-08-16-34-08-s2ef-coll-painn-painn-/best_checkpoint.pt
+teacher_model:
+  name: painn
+  hidden_channels: 512
+  num_layers: 6
+  num_rbf: 128
+  cutoff: 12.0
+  max_neighbors: 50
+  scale_file: configs/s2ef/200k/painn/painn_nb6_scaling_factors.pt
+  regress_forces: True
+  direct_forces: True
+  use_pbc: True
+  otf_graph: True
+  use_distill: True
+  id_mapping: True
+  distill_layer_code: U6

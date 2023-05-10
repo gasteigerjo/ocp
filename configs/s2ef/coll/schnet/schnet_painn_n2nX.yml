@@ -1,0 +1,10 @@
+includes:
+  - configs/s2ef/coll/schnet/schnet_painn_distill.yml
+distillation:
+  distill_loss: node2node_distill_loss
+  distill_lambda: 100.0
+
+teacher_model:
+  distill_layer_code: contactmlp
+
+amp: False
