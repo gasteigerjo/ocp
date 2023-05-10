@@ -1250,8 +1250,8 @@ class DistillForcesTrainer(BaseTrainer):
             energy_target = torch.cat(
                 [batch.y.to(self.device) for batch in batch_list], dim=0
             )
-        if self.normalizer.get("normalize_labels", False):
-            energy_target = self.normalizers["target"].norm(energy_target)
+            if self.normalizer.get("normalize_labels", False):
+                energy_target = self.normalizers["target"].norm(energy_target)
 
         # loss weighting of energies based on the origin of the data
         # these scaling factors can be factored out of the loss
@@ -1272,10 +1272,10 @@ class DistillForcesTrainer(BaseTrainer):
                     [batch.force.to(self.device) for batch in batch_list],
                     dim=0,
                 )
-            if self.normalizer.get("normalize_labels", False):
-                force_target = self.normalizers["grad_target"].norm(
-                    force_target
-                )
+                if self.normalizer.get("normalize_labels", False):
+                    force_target = self.normalizers["grad_target"].norm(
+                        force_target
+                    )
 
             # loss weighting of forces based on the origin of the data
             # these scaling factors can be factored out of the loss
@@ -1376,8 +1376,8 @@ class DistillForcesTrainer(BaseTrainer):
             energy_target = torch.cat(
                 [batch.y.to(self.device) for batch in batch_list], dim=0
             )
-        if self.normalizer.get("normalize_labels", False):
-            energy_target = self.normalizers["target"].norm(energy_target)
+            if self.normalizer.get("normalize_labels", False):
+                energy_target = self.normalizers["target"].norm(energy_target)
         energy_mult = self.config["distillation"].get(
             "energy_coefficient", 0.0
         )
@@ -1395,10 +1395,10 @@ class DistillForcesTrainer(BaseTrainer):
                     [batch.force.to(self.device) for batch in batch_list],
                     dim=0,
                 )
-            if self.normalizer.get("normalize_labels", False):
-                force_target = self.normalizers["grad_target"].norm(
-                    force_target
-                )
+                if self.normalizer.get("normalize_labels", False):
+                    force_target = self.normalizers["grad_target"].norm(
+                        force_target
+                    )
 
             tag_specific_weights = self.config["task"].get(
                 "tag_specific_weights", []
