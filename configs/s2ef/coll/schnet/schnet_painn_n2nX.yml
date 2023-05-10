@@ -5,6 +5,6 @@ distillation:
   distill_lambda: 100.0
 
 teacher_model:
-  distill_layer_code: contactmlp
+  distill_final_features: False
 
 amp: False
