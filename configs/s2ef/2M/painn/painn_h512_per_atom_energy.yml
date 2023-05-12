@@ -1,0 +1,4 @@
+includes:
+  - configs/s2ef/2M/painn/painn_base_distill.yml
+distillation:
+  distill_loss: per_atom_energy_distill_loss

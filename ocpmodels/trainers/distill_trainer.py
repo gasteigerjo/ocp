@@ -16,10 +16,10 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 import torch_geometric
+import wandb
 from torch_scatter import scatter
 from tqdm import tqdm
 
-import wandb
 from ocpmodels.common import distutils
 from ocpmodels.common.data_parallel import (
     BalancedBatchSampler,
@@ -43,6 +43,55 @@ def vector_projection(vec1, vec2):
         vec1.unsqueeze(-2), vec2_normalized.unsqueeze(-1)
     ).squeeze(-1)
     return coef * vec2_normalized
+
+
+def get_h(n):
+    return torch.eye(n) - 1 / n * torch.ones((n, n))
+
+
+def center_matrix(M):
+    n = M.shape[0]
+    H = get_h(n).to(device=M.device)
+    return torch.mm(H, torch.mm(M, H))
+
+
+def gram_matrix(M):
+    return torch.mm(M, M.t())
+
+
+def hsic_given_centered(K_prime, L_prime):
+    m = K_prime.shape[0]
+    K_vec = K_prime.flatten().unsqueeze(-1)
+    L_vec = L_prime.flatten().unsqueeze(-1)
+    return (torch.mm(K_vec.t(), L_vec) / ((m - 1) ** 2)).squeeze()
+
+
+def hsic(K, L):
+    assert L.shape[0] == K.shape[0], "K and L have non-conforming sizes"
+    K_prime = center_matrix(K)
+    L_prime = center_matrix(L)
+    return hsic_given_centered(K_prime, L_prime)
+
+
+def cka(X, Y):
+    """
+    X: batch of features of shape BxD1
+    Y: batch of features of shape BxD2
+    """
+    assert len(X.shape) == 2, "X matrix not correct shape"
+    assert len(Y.shape) == 2, "Y matrix not correct shape"
+    assert Y.shape[0] == X.shape[0], "X and Y doesn't have same batch size"
+    with torch.cuda.amp.autocast(False):
+        K = gram_matrix(X)
+        L = gram_matrix(Y)
+
+        # Center matrix here to avoid doing it multiple times
+        K_prime = center_matrix(K)
+        L_prime = center_matrix(L)
+        kl = hsic_given_centered(K_prime, L_prime)
+        kk = hsic_given_centered(K_prime, K_prime)
+        ll = hsic_given_centered(L_prime, L_prime)
+        return kl / torch.sqrt(kk * ll)
 
 
 @registry.register_trainer("distill")
@@ -247,6 +296,9 @@ class DistillForcesTrainer(BaseTrainer):
                 self.adversarial_distill_lambda = self.config["distillation"][
                     "adversarial_distill_lambda"
                 ]
+        self.use_mae = self.config["distillation"].get("use_mae", False)
+        self.use_huber = self.config["distillation"].get("use_huber", False)
+        self.huber_delta = self.config["distillation"].get("huber_delta", 1.0)
 
     def load_task(self):
         logging.info(f"Loading dataset: {self.config['task']['dataset']}")
@@ -508,6 +560,13 @@ class DistillForcesTrainer(BaseTrainer):
         loss = scatter(loss, batch_list[0].batch, dim=0, reduce="mean")
         return torch.mean(loss)
 
+    def _node_cka_distill_loss(self, out_batch, batch):
+        cka_loss = 1 - cka(
+            out_batch["out"]["node_feature"],
+            out_batch["t_out"]["node_feature"],
+        )
+        return cka_loss
+
     def _node_global_preservation_distill_loss(self, out_batch, batch):
         return self._global_preservation(
             out_batch["out"]["node_feature"],
@@ -523,20 +582,50 @@ class DistillForcesTrainer(BaseTrainer):
         )
 
     def _node2node_distill_loss(self, out_batch, batch):
-        return torch.nn.functional.mse_loss(
-            out_batch["out"]["node_feature"],
-            out_batch["t_out"]["node_feature"],
-        )
+        if self.use_mae:
+            return torch.nn.functional.l1_loss(
+                out_batch["out"]["node_feature"],
+                out_batch["t_out"]["node_feature"],
+            )
+        elif self.use_huber:
+            return torch.nn.functional.huber_loss(
+                out_batch["out"]["node_feature"],
+                out_batch["t_out"]["node_feature"],
+                delta=self.huber_delta,
+            )
+        else:
+            return torch.nn.functional.mse_loss(
+                out_batch["out"]["node_feature"],
+                out_batch["t_out"]["node_feature"],
+            )
 
     def _edge2node_distill_loss(self, out_batch, batch):
-        return torch.nn.functional.mse_loss(
-            out_batch["out"]["n2e_feature"],
-            out_batch["t_out"]["e2n_feature"],
-        )
+        if self.use_mae:
+            return torch.nn.functional.l1_loss(
+                out_batch["out"]["n2e_feature"],
+                out_batch["t_out"]["e2n_feature"],
+            )
+        elif self.use_huber:
+            return torch.nn.functional.huber_loss(
+                out_batch["out"]["n2e_feature"],
+                out_batch["t_out"]["e2n_feature"],
+                delta=self.huber_delta,
+            )
+        else:
+            return torch.nn.functional.mse_loss(
+                out_batch["out"]["n2e_feature"],
+                out_batch["t_out"]["e2n_feature"],
+            )
 
     def _edge2edge_distill_loss(self, out_batch, batch):
         return torch.nn.functional.mse_loss(
             out_batch["out"]["e2e_feature"], out_batch["t_out"]["edge_feature"]
+        )
+
+    def _per_atom_energy_distill_loss(self, out_batch, batch):
+        return self.loss_fn["energy"](
+            out_batch["out"]["per_atom_energy"],
+            out_batch["t_out"]["per_atom_energy"],
         )
 
     def _vec2vec_distill_loss(self, out_batch, batch):
@@ -904,10 +993,22 @@ class DistillForcesTrainer(BaseTrainer):
                     loss = self._compute_loss(out_batch["out"], batch)
                     distill_loss = []
                     for loss_idx, loss_type in enumerate(self.distill_fns):
-                        distill_loss.append(
-                            getattr(self, "_" + loss_type)(out_batch, batch)
-                            * self.distill_lambda[loss_idx]
-                        )
+                        if loss_type == "regular":
+                            distill_loss.append(
+                                self._compute_loss_distill(
+                                    out_batch["out"],
+                                    batch,
+                                    out_batch["t_out"],
+                                )
+                                * self.distill_lambda[loss_idx]
+                            )
+                        else:
+                            distill_loss.append(
+                                getattr(self, "_" + loss_type)(
+                                    out_batch, batch
+                                )
+                                * self.distill_lambda[loss_idx]
+                            )
                     loss += sum(distill_loss)
 
                 loss = self.scaler.scale(loss) if self.scaler else loss
@@ -1062,19 +1163,13 @@ class DistillForcesTrainer(BaseTrainer):
                 with torch.no_grad():
                     (
                         [tfnode, tfe2n, tfvec, tfedge],
-                        [
-                            t_out_energy,
-                            t_out_forces,
-                        ],
+                        [t_out_energy, t_out_forces, t_out_per_atom_energy],
                         main_graph,
                     ) = self.teacher.extract_features(batch_list)
             else:
                 (
                     [tfnode, tfe2n, tfvec, tfedge],
-                    [
-                        t_out_energy,
-                        t_out_forces,
-                    ],
+                    [t_out_energy, t_out_forces, t_out_per_atom_energy],
                     main_graph,
                 ) = self.teacher.extract_features(batch_list)
             if "edge2edge_distill_loss" not in self.distill_fns:
@@ -1084,6 +1179,7 @@ class DistillForcesTrainer(BaseTrainer):
                 [
                     out_energy,
                     out_forces,
+                    out_per_atom_energy,
                 ],
                 _,
             ) = self.model.extract_features(batch_list, main_graph)
@@ -1113,6 +1209,7 @@ class DistillForcesTrainer(BaseTrainer):
             "vector_feature": sfvec,
             "e2e_feature": sfe2e,
             "energy": out_energy,
+            "per_atom_energy": out_per_atom_energy,
         }
 
         if self.config["model_attributes"].get("regress_forces", True):
@@ -1124,6 +1221,7 @@ class DistillForcesTrainer(BaseTrainer):
             "vector_feature": tfvec,
             "edge_feature": tfedge,
             "energy": t_out_energy,
+            "per_atom_energy": t_out_per_atom_energy,
         }
 
         if self.config["teacher_model_attributes"].get("regress_forces", True):
@@ -1150,8 +1248,8 @@ class DistillForcesTrainer(BaseTrainer):
             energy_target = torch.cat(
                 [batch.y.to(self.device) for batch in batch_list], dim=0
             )
-        if self.normalizer.get("normalize_labels", False):
-            energy_target = self.normalizers["target"].norm(energy_target)
+            if self.normalizer.get("normalize_labels", False):
+                energy_target = self.normalizers["target"].norm(energy_target)
 
         # loss weighting of energies based on the origin of the data
         # these scaling factors can be factored out of the loss
@@ -1172,10 +1270,10 @@ class DistillForcesTrainer(BaseTrainer):
                     [batch.force.to(self.device) for batch in batch_list],
                     dim=0,
                 )
-            if self.normalizer.get("normalize_labels", False):
-                force_target = self.normalizers["grad_target"].norm(
-                    force_target
-                )
+                if self.normalizer.get("normalize_labels", False):
+                    force_target = self.normalizers["grad_target"].norm(
+                        force_target
+                    )
 
             # loss weighting of forces based on the origin of the data
             # these scaling factors can be factored out of the loss
@@ -1276,8 +1374,8 @@ class DistillForcesTrainer(BaseTrainer):
             energy_target = torch.cat(
                 [batch.y.to(self.device) for batch in batch_list], dim=0
             )
-        if self.normalizer.get("normalize_labels", False):
-            energy_target = self.normalizers["target"].norm(energy_target)
+            if self.normalizer.get("normalize_labels", False):
+                energy_target = self.normalizers["target"].norm(energy_target)
         energy_mult = self.config["distillation"].get(
             "energy_coefficient", 0.0
         )
@@ -1295,10 +1393,10 @@ class DistillForcesTrainer(BaseTrainer):
                     [batch.force.to(self.device) for batch in batch_list],
                     dim=0,
                 )
-            if self.normalizer.get("normalize_labels", False):
-                force_target = self.normalizers["grad_target"].norm(
-                    force_target
-                )
+                if self.normalizer.get("normalize_labels", False):
+                    force_target = self.normalizers["grad_target"].norm(
+                        force_target
+                    )
 
             tag_specific_weights = self.config["task"].get(
                 "tag_specific_weights", []

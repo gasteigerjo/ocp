@@ -1514,6 +1514,7 @@ class GemNetOC(ScaledModule):
 
         with torch.cuda.amp.autocast(False):
             E_t = self.out_energy(x_E.float())
+            E_per_atom = E_t.squeeze()
             if self.direct_forces:
                 F_st = self.out_forces(x_F.float())
 
@@ -1542,13 +1543,13 @@ class GemNetOC(ScaledModule):
                 dim_size=num_atoms,
                 reduce=self.distill_reduce,
             )
-
-        features_to_distill = [
-            features_to_distill[0],
-            m2h,
-            m2v,
-            features_to_distill[1],
-        ]
+        with torch.cuda.amp.autocast(False):
+            features_to_distill = [
+                features_to_distill[0].float(),
+                m2h.float(),
+                m2v.float(),
+                features_to_distill[1].float(),
+            ]
         main_graph["id_swap"] = id_swap
         if self.regress_forces:
             if self.direct_forces:
@@ -1585,10 +1586,7 @@ class GemNetOC(ScaledModule):
             F_t = F_t.squeeze(1)  # (num_atoms, 3)
             return (
                 features_to_distill,
-                [
-                    E_t,
-                    F_t,
-                ],
+                [E_t, F_t, E_per_atom],
                 main_graph,
             )  # (nMolecules, num_targets), (nAtoms, 3)
         else:
