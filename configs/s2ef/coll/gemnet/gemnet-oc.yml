@@ -42,7 +42,7 @@ model:
   extensive: True
   output_init: HeOrthogonal
   activation: silu
-  scale_file: configs/s2ef/all/gemnet/scaling_factors/gemnet-oc.pt # try without
+  scale_file: configs/s2ef/coll/gemnet/gemnet-oc_scaling_factors.pt # try without
   regress_forces: True
   direct_forces: True # {{True}, False}
   forces_coupled: False
@@ -72,7 +72,7 @@ optim:
   factor: 0.9
   cooldown: 5
   max_epochs: 1000
-  force_coefficient: 1000
+  force_coefficient: 100
   energy_coefficient: 1
   ema_decay: 0.999
   clip_grad_norm: 10
