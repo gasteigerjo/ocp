@@ -4,62 +4,61 @@ trainer: distill
 
 model:
   use_distill: True
+  teacher_node_dim: 128
+  teacher_edge_dim: 256
 
 # teacher_path: checkpoints/2023-05-07-23-00-16-s2ef-coll-gemnet-gemnet-/best_checkpoint.pt
-teacher_path: checkpoints/2023-05-16-00-42-40-s2ef-coll-gemnet-gemnet-oc-/checkpoint.pt
+teacher_path: pretrained/gemnetoc_coll_teacher_best.pt
 teacher_model:
   name: gemnet_oc
   num_spherical: 7
-  num_radial: 128
-  num_blocks: 4
-  emb_size_atom: 256
-  emb_size_edge: 512
+  num_radial: 128 # Bessel vs. Gaussians: 6 Bessel, 32 Bessel, 128 Gaussian
+  num_blocks: 4 # {2, 3, {4}, 6}
+  emb_size_atom: 128
+  emb_size_edge: 256 # {32, 64, 128, 256, {512}, 1024}
   emb_size_trip_in: 64
   emb_size_trip_out: 64
   emb_size_quad_in: 32
   emb_size_quad_out: 32
   emb_size_aint_in: 64
   emb_size_aint_out: 64
-  emb_size_rbf: 16
-  emb_size_cbf: 16
-  emb_size_sbf: 32
+  emb_size_rbf: 16 # 16,64
+  emb_size_cbf: 16 # 16,64
+  emb_size_sbf: 32 # 16,64
   num_before_skip: 2
   num_after_skip: 2
   num_concat: 1
   num_atom: 3
-  num_output_afteratom: 3
+  num_output_afteratom: 3 # {0, {3}}
   cutoff: 12.0
   cutoff_qint: 12.0
   cutoff_aeaint: 12.0
   cutoff_aint: 12.0
-  max_neighbors: 30
-  max_neighbors_qint: 8
+  max_neighbors: 30 # {{n30c12}, n30c6, n1000c6}
+  max_neighbors_qint: 8 # {4, {8}, 12, 20}
   max_neighbors_aeaint: 20
   max_neighbors_aint: 1000
   rbf:
-    name: gaussian
+    name: gaussian # Bessel vs. Gaussians: 6 Bessel, 32 Bessel, 128 Gaussian
   envelope:
     name: polynomial
     exponent: 5
   cbf:
     name: spherical_harmonics
   sbf:
-    name: legendre_outer
+    name: legendre_outer # {{legendre_outer}, spharm}
   extensive: True
   output_init: HeOrthogonal
   activation: silu
-  scale_file: configs/s2ef/coll/gemnet/gemnet-oc_scaling_factors_ref.pt # try without
-
+  # scale_file: configs/s2ef/coll/gemnet/gemnet-oc_scaling_factors_ref.pt # try without
   regress_forces: True
-  direct_forces: True
+  direct_forces: True # {{True}, False}
   forces_coupled: False
-
-  quad_interaction: True
-  atom_edge_interaction: True
-  edge_atom_interaction: True
-  atom_interaction: True
-
-  num_atom_emb_layers: 2
-  num_global_out_layers: 2
+  quad_interaction: True      # {{True}, False}
+  atom_edge_interaction: True # {{True}, False}
+  edge_atom_interaction: True # {{True}, False}
+  atom_interaction: True # {{True}, False}
+  num_atom_emb_layers: 2 # {0, {2}}
+  num_global_out_layers: 2 # {-1, {2}}
   qint_tags: [1, 2]
   use_pbc: False
