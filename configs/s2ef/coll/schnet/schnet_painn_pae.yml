@@ -1,0 +1,4 @@
+includes:
+  - configs/s2ef/coll/schnet/schnet_painn_distill.yml
+distillation:
+  distill_loss: per_atom_energy_distill_loss

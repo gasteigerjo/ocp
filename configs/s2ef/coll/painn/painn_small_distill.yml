@@ -1,18 +1,15 @@
 includes:
-  - configs/s2ef/coll/schnet/schnet.yml
+  - configs/s2ef/coll/painn/painn.yml
 trainer: distill
 
 model:
+  hidden_channels: 128
+  num_layers: 4
   use_distill: True
-  otf_graph: True
+  distill_layer_code: U4 # look at painn_small.yml   "num_layers"
   teacher_node_dim: 256
   teacher_edge_dim: 256
 
-optim:
-  batch_size: 32
-  eval_batch_size: 32
-
-# teacher_path: checkpoints/2023-05-08-16-34-08-s2ef-coll-painn-painn-/best_checkpoint.pt
 teacher_path: checkpoints/2023-05-22-03-29-04-s2ef-coll-painn-painn---model.hidden_channels=256/checkpoint.pt
 teacher_model:
   name: painn
@@ -21,7 +18,7 @@ teacher_model:
   num_rbf: 128
   cutoff: 12.0
   max_neighbors: 50
-  # scale_file: configs/s2ef/coll/painn/painn_nb6_scaling_factors_ref.pt
+  # scale_file: configs/s2ef/200k/painn/painn_nb6_scaling_factors.pt
   regress_forces: True
   direct_forces: True
   use_pbc: True

@@ -219,12 +219,13 @@ class SchNetWrap(SchNet):
 
             h = self.embedding(z)
 
-            edge_index = super(SchNetWrap, self).radius_graph(
-                pos,
-                r=self.cutoff,
-                batch=batch,
-                max_num_neighbors=self.max_num_neighbors,
-            )
+            if not self.otf_graph:
+                edge_index = super(SchNetWrap, self).interaction_graph(
+                    pos,
+                    r=self.cutoff,
+                    batch=batch,
+                    max_num_neighbors=self.max_num_neighbors,
+                )
             row, col = edge_index
             edge_weight = (pos[row] - pos[col]).norm(dim=-1)
             edge_attr = self.distance_expansion(edge_weight)
@@ -286,10 +287,7 @@ class SchNetWrap(SchNet):
                         None,
                         None,
                     ],
-                    [
-                        energy.squeeze(),
-                        forces,
-                    ],
+                    [energy.squeeze(), forces, h.squeeze()],
                     None,
                 )  # TODO: is squeeze here correct?
         else:

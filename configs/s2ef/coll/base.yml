@@ -1,11 +1,11 @@
 dataset:
-  - src: data/s2ef/coll/train # 120k samples
+  - src: data/s2ef/coll_ref/train # 120k samples
     normalize_labels: True
-    target_mean: -6288.368188706492
-    target_std: 1 #2921.369376026417
+    target_mean: 0.0 #-36.37803101 # -6288.368188706492
+    target_std: 1.0 # 17.66877883 # 2921.369376026417
     grad_target_mean: 0.0
     grad_target_std: 1
-  - src: data/s2ef/coll/val # 10k samples
+  - src: data/s2ef/coll_ref/val # 10k samples
 
 logger:
   name: wandb

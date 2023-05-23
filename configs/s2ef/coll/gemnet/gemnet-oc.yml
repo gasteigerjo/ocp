@@ -6,8 +6,8 @@ model:
   num_spherical: 7
   num_radial: 128 # Bessel vs. Gaussians: 6 Bessel, 32 Bessel, 128 Gaussian
   num_blocks: 4 # {2, 3, {4}, 6}
-  emb_size_atom: 256
-  emb_size_edge: 512 # {32, 64, 128, 256, {512}, 1024}
+  emb_size_atom: 128
+  emb_size_edge: 256 # {32, 64, 128, 256, {512}, 1024}
   emb_size_trip_in: 64
   emb_size_trip_out: 64
   emb_size_quad_in: 32
@@ -42,7 +42,7 @@ model:
   extensive: True
   output_init: HeOrthogonal
   activation: silu
-  scale_file: configs/s2ef/coll/gemnet/gemnet-oc_scaling_factors.pt # try without
+  # scale_file: configs/s2ef/coll/gemnet/gemnet-oc_scaling_factors_ref.pt # try without
   regress_forces: True
   direct_forces: True # {{True}, False}
   forces_coupled: False
@@ -53,25 +53,23 @@ model:
   num_atom_emb_layers: 2 # {0, {2}}
   num_global_out_layers: 2 # {-1, {2}}
   qint_tags: [1, 2]
-  # symmetric_edge_symmetrization: False
-  # symmetric_mp: True # {{True}, False}
   use_pbc: False
 
 optim:
   batch_size: 32 # effective batch size = small datasets: {1, 4, 16, {32}, 64}, OC20-All: {64, 128, {512}, 2048}
   eval_batch_size: 32 # effective batch size = small datasets: {1, 4, 16, {32}, 64}, OC20-All: {64, 128, {512}, 2048}
-  num_workers: 2
+  num_workers: 6
   lr_initial: 1.e-3
   optimizer: AdamW
   optimizer_params: {"eps": 1.e-7, "weight_decay": 0.000002, "amsgrad": True}
   scheduler: LinearWarmupExponentialDecay
   decay_rate: 0.01
   warmup_steps: 3750
-  decay_steps: 4500000
+  decay_steps: 4000000 # 4500000
   patience: 5
   factor: 0.9
   cooldown: 5
-  max_epochs: 1000
+  max_epochs: 500
   force_coefficient: 100
   energy_coefficient: 1
   ema_decay: 0.999

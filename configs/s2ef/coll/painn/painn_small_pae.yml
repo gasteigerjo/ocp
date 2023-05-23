@@ -1,0 +1,5 @@
+includes:
+  - configs/s2ef/coll/painn/painn_small_distill.yml
+distillation:
+  distill_loss: per_atom_energy_distill_loss
+  distill_lambda: 200.0

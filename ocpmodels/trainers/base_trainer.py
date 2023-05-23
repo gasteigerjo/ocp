@@ -420,7 +420,7 @@ class BaseTrainer(ABC):
             }
             self.model.load_state_dict(new_dict)
         else:
-            self.model.load_state_dict(checkpoint["state_dict"])
+            self.model.load_state_dict(checkpoint["state_dict"], strict=False)
 
         if "optimizer" in checkpoint:
             self.optimizer.load_state_dict(checkpoint["optimizer"])

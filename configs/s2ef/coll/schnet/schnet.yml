@@ -3,29 +3,29 @@ includes:
 
 model:
   name: schnet
-  hidden_channels: 1024
-  num_filters: 256
-  num_interactions: 5
-  num_gaussians: 200
-  cutoff: 6.0
-  use_pbc: True
+  hidden_channels: 128
+  num_filters: 128
+  num_interactions: 6
+  num_gaussians: 50
+  cutoff: 12.0
+  use_pbc: False
   otf_graph: True
 
 optim:
   batch_size: 32 # effective batch size = small datasets: {1, 4, 16, {32}, 64}, OC20-All: {64, 128, {512}, 2048}
   eval_batch_size: 32 # effective batch size = small datasets: {1, 4, 16, {32}, 64}, OC20-All: {64, 128, {512}, 2048}
-  num_workers: 2
+  num_workers: 6
   lr_initial: 1.e-3
   optimizer: AdamW
   optimizer_params: {"eps": 1.e-7, "weight_decay": 0.000002, "amsgrad": True}
   scheduler: LinearWarmupExponentialDecay
   decay_rate: 0.01
   warmup_steps: 3750
-  decay_steps: 4500000
+  decay_steps: 4000000
   patience: 5
   factor: 0.9
   cooldown: 5
-  max_epochs: 1000
+  max_epochs: 500
   force_coefficient: 100
   energy_coefficient: 1
   ema_decay: 0.999

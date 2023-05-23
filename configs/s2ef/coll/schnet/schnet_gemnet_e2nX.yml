@@ -1,5 +1,0 @@
-includes:
-  - configs/s2ef/coll/schnet/schnet_gemnet_distill.yml
-distillation:
-  distill_loss: edge2node_distill_loss
-  distill_lambda: 10.0

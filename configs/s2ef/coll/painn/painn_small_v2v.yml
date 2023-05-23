@@ -1,0 +1,5 @@
+includes:
+  - configs/s2ef/coll/painn/painn_small_distill.yml
+distillation:
+  distill_loss: vec2vec_distill_loss
+  distill_lambda: 1.0 # better than 0.5, 0.1

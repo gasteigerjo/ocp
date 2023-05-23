@@ -5,7 +5,8 @@ trainer: distill
 model:
   use_distill: True
 
-teacher_path: checkpoints/2023-05-07-23-00-16-s2ef-coll-gemnet-gemnet-/best_checkpoint.pt
+# teacher_path: checkpoints/2023-05-07-23-00-16-s2ef-coll-gemnet-gemnet-/best_checkpoint.pt
+teacher_path: checkpoints/2023-05-16-00-42-40-s2ef-coll-gemnet-gemnet-oc-/checkpoint.pt
 teacher_model:
   name: gemnet_oc
   num_spherical: 7
@@ -47,7 +48,7 @@ teacher_model:
   extensive: True
   output_init: HeOrthogonal
   activation: silu
-  scale_file: configs/s2ef/all/gemnet/scaling_factors/gemnet-oc.pt
+  scale_file: configs/s2ef/coll/gemnet/gemnet-oc_scaling_factors_ref.pt # try without
 
   regress_forces: True
   direct_forces: True
