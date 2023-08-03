@@ -16,10 +16,11 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 import torch_geometric
-import wandb
+import torch_geometric.utils as ptg_utils
 from torch_scatter import scatter
 from tqdm import tqdm
 
+import wandb
 from ocpmodels.common import distutils
 from ocpmodels.common.data_parallel import (
     BalancedBatchSampler,
@@ -560,6 +561,32 @@ class DistillForcesTrainer(BaseTrainer):
         loss = scatter(loss, batch_list[0].batch, dim=0, reduce="mean")
         return torch.mean(loss)
 
+    def _local_preservation(self, feat_s, feat_t, edge_index):
+        index1, index2 = edge_index
+        s_sim = ptg_utils.softmax(
+            (feat_s[index1] - feat_s[index2]).norm(p=2, dim=-1), index2
+        )
+        t_sim = ptg_utils.softmax(
+            (feat_t[index1] - feat_t[index2]).norm(p=2, dim=-1), index2
+        )
+
+        lsp_loss = F.kl_div(torch.log(s_sim), t_sim, log_target=False)
+        return lsp_loss
+
+    def _node_local_preservation_distill_loss(self, out_batch, batch):
+        return self._local_preservation(
+            out_batch["out"]["node_feature"],
+            out_batch["t_out"]["node_feature"],
+            batch[0].edge_index,
+        )
+
+    def _edge_local_preservation_distill_loss(self, out_batch, batch):
+        return self._local_preservation(
+            out_batch["out"]["n2e_feature"],
+            out_batch["t_out"]["e2n_feature"],
+            batch[0].edge_index,
+        )
+
     def _node_cka_distill_loss(self, out_batch, batch):
         cka_loss = 1 - cka(
             out_batch["out"]["node_feature"],
@@ -571,6 +598,13 @@ class DistillForcesTrainer(BaseTrainer):
         return self._global_preservation(
             out_batch["out"]["node_feature"],
             out_batch["t_out"]["node_feature"],
+            batch,
+        )
+
+    def _edge_global_preservation_distill_loss(self, out_batch, batch):
+        return self._global_preservation(
+            out_batch["out"]["n2e_feature"],
+            out_batch["t_out"]["e2n_feature"],
             batch,
         )
 
