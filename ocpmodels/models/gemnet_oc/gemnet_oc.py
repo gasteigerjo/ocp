@@ -11,6 +11,7 @@ from typing import Optional
 
 import numpy as np
 import torch
+from torch import nn
 from torch_geometric.nn import radius_graph
 from torch_scatter import scatter, segment_coo
 
@@ -238,6 +239,10 @@ class GemNetOC(ScaledModule):
         qint_tags: list = [0, 1, 2],
         distill_reduce: str = "sum",
         distill_layer_code: str = "concatmlp",
+        teacher_node_dim=256,
+        teacher_edge_dim=512,
+        use_distill=False,
+        id_mapping=False,
         **kwargs,  # backwards compatibility with deprecated arguments
     ):
         super().__init__()
@@ -247,6 +252,15 @@ class GemNetOC(ScaledModule):
         assert num_blocks > 0
         self.num_blocks = num_blocks
         self.extensive = extensive
+
+        if use_distill and not id_mapping:
+            self.n2n_mapping = nn.Linear(emb_size_atom, teacher_node_dim)
+            self.e2e_mapping = nn.Linear(emb_size_edge, teacher_edge_dim)
+        else:
+            self.n2n_mapping = nn.Identity()
+            self.e2e_mapping = nn.Identity()
+        print("n2n_mapping:\n", self.n2n_mapping)
+        print("e2e_mapping:\n", self.e2e_mapping)
 
         self.distill_reduce = distill_reduce
         if distill_layer_code.lower() == "concatmlp":
@@ -1505,7 +1519,10 @@ class GemNetOC(ScaledModule):
             x_F = self.out_mlp_F(torch.cat(xs_F, dim=-1))
 
         if features_to_distill is None:
-            features_to_distill = [x_E, x_F]
+            features_to_distill = [
+                self.n2n_mapping(x_E),
+                self.e2e_mapping(x_F),
+            ]
 
         # if self.distill_final_features:
         #    features_to_distill = [h, m]

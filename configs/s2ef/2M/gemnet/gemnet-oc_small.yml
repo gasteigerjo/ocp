@@ -5,9 +5,9 @@ model:
   name: gemnet_oc
   num_spherical: 7
   num_radial: 128
-  num_blocks: 4
-  emb_size_atom: 256
-  emb_size_edge: 512
+  num_blocks: 3
+  emb_size_atom: 128
+  emb_size_edge: 256
   emb_size_trip_in: 64
   emb_size_trip_out: 64
   emb_size_quad_in: 32
@@ -42,7 +42,7 @@ model:
   extensive: True
   output_init: HeOrthogonal
   activation: silu
-  scale_file: configs/s2ef/all/gemnet/scaling_factors/gemnet-oc.pt
+  scale_file: configs/s2ef/all/gemnet/scaling_factors/gemnet-oc_small.pt
 
   regress_forces: True
   direct_forces: True
@@ -59,11 +59,11 @@ model:
   otf_graph: True
 
 optim:
-  batch_size: 16
-  eval_batch_size: 16
+  batch_size: 32
+  eval_batch_size: 32
   load_balancing: atoms
   eval_every: 5000
-  num_workers: 2
+  num_workers: 6
   lr_initial: 5.e-4
   optimizer: AdamW
   optimizer_params: {"amsgrad": True}

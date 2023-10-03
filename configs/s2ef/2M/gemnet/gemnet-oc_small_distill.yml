@@ -1,7 +1,12 @@
 includes:
-  - configs/s2ef/2M/base.yml
+  - configs/s2ef/2M/gemnet/gemnet-oc_small.yml
+trainer: distill
 
 model:
+  use_distill: True
+
+teacher_path: pretrained/gemnet_oc_base_s2ef_2M.pt
+teacher_model:
   name: gemnet_oc
   num_spherical: 7
   num_radial: 128
@@ -56,26 +61,3 @@ model:
   num_atom_emb_layers: 2
   num_global_out_layers: 2
   qint_tags: [1, 2]
-  otf_graph: True
-
-optim:
-  batch_size: 16
-  eval_batch_size: 16
-  load_balancing: atoms
-  eval_every: 5000
-  num_workers: 2
-  lr_initial: 5.e-4
-  optimizer: AdamW
-  optimizer_params: {"amsgrad": True}
-  scheduler: ReduceLROnPlateau
-  mode: min
-  factor: 0.8
-  patience: 3
-  max_epochs: 80
-  force_coefficient: 100
-  energy_coefficient: 1
-  ema_decay: 0.999
-  clip_grad_norm: 10
-  loss_energy: mae
-  loss_force: l2mae
-  weight_decay: 0
