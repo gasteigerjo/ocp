@@ -1,0 +1,9 @@
+includes:
+  - configs/s2ef/2M/gemnet/gemnet-oc_small_distill.yml
+
+model:
+  id_mapping: True
+
+distillation:
+  distill_loss: regular
+  distill_lambda: 0.7
