@@ -1234,8 +1234,9 @@ class DistillForcesTrainer(BaseTrainer):
                     tfe2n,
                 ], t_out_energy = self.teacher.extract_features(batch_list)
 
-        with torch.no_grad():
-            t_out = self.teacher.extract_features(batch_list)
+        # Don't know why these two lines are here, they just seem to makes thing go slower and require more memory?
+        # with torch.no_grad():
+        #    t_out = self.teacher.extract_features(batch_list)
 
         out = {
             "node_feature": sfnode,
